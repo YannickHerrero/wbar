@@ -25,6 +25,7 @@ tungstenite = { version = "0.29.0", default-features = false, features = ["hands
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
+tray-icon = { version = "0.24.0", default-features = false }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

@@ -12,6 +12,7 @@ mod config;
 mod fonts;
 mod glazewm;
 mod hotreload;
+mod tray;
 mod widgets;
 
 use eframe::egui;
@@ -21,6 +22,7 @@ use crate::appbar::{AppBar, Edge};
 use crate::config::{BarPosition, Config};
 use crate::glazewm::GlazewmClient;
 use crate::hotreload::HotReload;
+use crate::tray::Tray;
 use crate::widgets::Widgets;
 
 fn main() -> eframe::Result {
@@ -76,7 +78,15 @@ fn main() -> eframe::Result {
 
             let glazewm = GlazewmClient::spawn(cc.egui_ctx.clone());
 
-            Ok(Box::new(WbarApp::new(cfg, hot, glazewm)))
+            let tray = match tray::build() {
+                Ok(t) => Some(t),
+                Err(err) => {
+                    tracing::warn!(error = ?err, "tray icon disabled");
+                    None
+                }
+            };
+
+            Ok(Box::new(WbarApp::new(cfg, hot, glazewm, tray)))
         }),
     )
 }
@@ -88,10 +98,16 @@ struct WbarApp {
     pinned: bool,
     hot: Option<HotReload>,
     appbar: Option<AppBar>,
+    tray: Option<Tray>,
 }
 
 impl WbarApp {
-    fn new(cfg: Config, hot: Option<HotReload>, glazewm: GlazewmClient) -> Self {
+    fn new(
+        cfg: Config,
+        hot: Option<HotReload>,
+        glazewm: GlazewmClient,
+        tray: Option<Tray>,
+    ) -> Self {
         let palette = cfg.effective_palette();
         let radius = cfg.effective_tokens().radius_sm;
         let widgets = Widgets::from_config(&cfg, &palette, radius, &glazewm);
@@ -102,6 +118,7 @@ impl WbarApp {
             pinned: false,
             hot,
             appbar: None,
+            tray,
         }
     }
 
@@ -188,6 +205,14 @@ impl eframe::App for WbarApp {
         self.drain_reloads(ctx);
         self.pin_to_edge(ctx);
         self.register_appbar(frame);
+        if let Some(t) = &self.tray
+            && tray::poll_quit(t)
+        {
+            tracing::info!("tray Quit clicked");
+            // Dropping WbarApp on close also drops the AppBar, which issues
+            // ABM_REMOVE — the taskbar reflows immediately.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
 
         // CentralPanel defaults to a Frame with ~8px margins on every side,
         // which would eat most of a 28px bar and leave too little vertical
