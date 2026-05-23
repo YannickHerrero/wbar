@@ -58,6 +58,7 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let palette = cfg.effective_palette();
             theme::apply(&cc.egui_ctx, &palette, theme::is_dark(cfg.theme));
+            theme::apply_font_size(&cc.egui_ctx, cfg.font.size);
 
             let hot = config_path.and_then(|p| match hotreload::spawn(p, cc.egui_ctx.clone()) {
                 Ok(h) => Some(h),
@@ -130,6 +131,7 @@ impl WbarApp {
             let palette = cfg.effective_palette();
             let radius = cfg.effective_tokens().radius_sm;
             theme::apply(ctx, &palette, theme::is_dark(cfg.theme));
+            theme::apply_font_size(ctx, cfg.font.size);
             self.widgets = Widgets::from_config(&cfg, &palette, radius, &self.glazewm);
 
             let position_changed = cfg.bar.position != self.cfg.bar.position
@@ -141,6 +143,7 @@ impl WbarApp {
                 self.appbar = None;
                 self.pinned = false;
             }
+            tracing::info!("config reloaded — palette, font, widgets refreshed");
         }
     }
 

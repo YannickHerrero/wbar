@@ -130,6 +130,23 @@ pub fn is_dark(theme: Theme) -> bool {
     matches!(theme, Theme::Ink)
 }
 
+/// Set the body, button, heading, monospace, and small text sizes off a single
+/// body font size. Called from the creation closure and on hot reload so the
+/// font config field actually does something.
+pub fn apply_font_size(ctx: &Context, body_size: f32) {
+    use eframe::egui::TextStyle;
+    ctx.style_mut(|style| {
+        for (text_style, font_id) in style.text_styles.iter_mut() {
+            font_id.size = match text_style {
+                TextStyle::Body | TextStyle::Button | TextStyle::Monospace => body_size,
+                TextStyle::Heading => body_size + 6.0,
+                TextStyle::Small => (body_size - 2.0).max(8.0),
+                _ => font_id.size,
+            };
+        }
+    });
+}
+
 pub fn apply(ctx: &Context, palette: &Palette, dark: bool) {
     let p = palette;
     let mut v = if dark {
