@@ -5,6 +5,7 @@ use eframe::egui;
 use crate::config::{Config, WidgetConfig};
 
 mod clock;
+mod sysinfo;
 
 pub trait Widget {
     fn render(&mut self, ui: &mut egui::Ui);
@@ -42,9 +43,10 @@ impl Widgets {
 fn build(id: &str, cfg: &WidgetConfig) -> Box<dyn Widget> {
     match cfg {
         WidgetConfig::Clock(c) => Box::new(clock::ClockWidget::new(c.clone())),
+        WidgetConfig::Sysinfo(c) => Box::new(sysinfo::SysinfoWidget::new(c.clone())),
         // Other widget kinds land in later commits; until then they show as
         // the widget id, which keeps the layout legible.
-        WidgetConfig::Glazewm(_) | WidgetConfig::Sysinfo(_) | WidgetConfig::Command(_) => {
+        WidgetConfig::Glazewm(_) | WidgetConfig::Command(_) => {
             Box::new(Placeholder(id.to_string()))
         }
     }
