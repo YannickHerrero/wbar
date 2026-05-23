@@ -5,6 +5,7 @@ use eframe::egui;
 use crate::config::{Config, WidgetConfig};
 
 mod clock;
+mod command;
 mod sysinfo;
 
 pub trait Widget {
@@ -44,11 +45,9 @@ fn build(id: &str, cfg: &WidgetConfig) -> Box<dyn Widget> {
     match cfg {
         WidgetConfig::Clock(c) => Box::new(clock::ClockWidget::new(c.clone())),
         WidgetConfig::Sysinfo(c) => Box::new(sysinfo::SysinfoWidget::new(c.clone())),
-        // Other widget kinds land in later commits; until then they show as
-        // the widget id, which keeps the layout legible.
-        WidgetConfig::Glazewm(_) | WidgetConfig::Command(_) => {
-            Box::new(Placeholder(id.to_string()))
-        }
+        WidgetConfig::Command(c) => Box::new(command::CommandWidget::new(c.clone())),
+        // GlazeWM workspaces lands in commit 18.
+        WidgetConfig::Glazewm(_) => Box::new(Placeholder(id.to_string())),
     }
 }
 
