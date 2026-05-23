@@ -3,9 +3,10 @@ use std::str::FromStr;
 
 use eframe::egui::{Color32, Context, Stroke, Visuals};
 use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer};
+use serde::ser::Serializer;
+use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum Theme {
     #[default]
     Paper,
@@ -216,6 +217,18 @@ impl<'de> Deserialize<'de> for HexColor {
             }
         }
         d.deserialize_str(V)
+    }
+}
+
+impl Serialize for HexColor {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let c = self.0;
+        let hex = if c.a() == 255 {
+            format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b())
+        } else {
+            format!("#{:02X}{:02X}{:02X}{:02X}", c.r(), c.g(), c.b(), c.a())
+        };
+        s.serialize_str(&hex)
     }
 }
 

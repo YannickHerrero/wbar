@@ -3,13 +3,13 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::theme::{self, HexColor, Palette, Theme, Tokens};
 
 const DEFAULT_CONFIG: &str = include_str!("default_config.toml");
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub bar: BarConfig,
@@ -43,11 +43,25 @@ impl Config {
         self.tokens.apply_to(&mut t);
         t
     }
+
+    /// Write the current config to `path` as pretty TOML. Used by the tray
+    /// theme switcher and the IPC `set-theme` handler so a runtime change
+    /// survives a restart. Creates the parent directory if missing.
+    pub fn save(&self, path: &std::path::Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("creating config dir at {}", parent.display()))?;
+        }
+        let text = toml::to_string_pretty(self).context("serialising config")?;
+        fs::write(path, text).with_context(|| format!("writing config at {}", path.display()))?;
+        tracing::info!(path = %path.display(), "config saved");
+        Ok(())
+    }
 }
 
 /// Per-field optional overrides of the selected theme's palette. Omit a field
 /// and it falls back to the theme's value.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PaletteOverride {
     pub paper: Option<HexColor>,
@@ -93,7 +107,7 @@ impl PaletteOverride {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TokensOverride {
     pub space_xs: Option<f32>,
@@ -147,7 +161,7 @@ impl TokensOverride {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BarConfig {
     pub position: BarPosition,
@@ -163,7 +177,7 @@ impl Default for BarConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BarPosition {
     #[default]
@@ -171,7 +185,7 @@ pub enum BarPosition {
     Bottom,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FontConfig {
     pub family: String,
@@ -187,7 +201,7 @@ impl Default for FontConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LayoutConfig {
     pub left: Vec<String>,
@@ -195,7 +209,7 @@ pub struct LayoutConfig {
     pub right: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum WidgetConfig {
     Glazewm(WorkspacesConfig),
@@ -204,13 +218,13 @@ pub enum WidgetConfig {
     Command(CommandConfig),
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspacesConfig {
     pub show_empty: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ClockConfig {
     pub format: String,
@@ -226,7 +240,7 @@ impl Default for ClockConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SysinfoConfig {
     pub metric: SysinfoMetric,
     pub format: String,
@@ -252,7 +266,7 @@ pub struct SysinfoConfig {
     pub warn_color: Option<HexColor>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SysinfoMetric {
     Cpu,
@@ -265,7 +279,7 @@ fn default_interval_seconds() -> u64 {
     2
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandConfig {
     pub command: String,
     #[serde(default = "default_interval_seconds")]
@@ -314,6 +328,20 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.theme, Theme::Paper);
         assert!(cfg.widgets.is_empty());
+    }
+
+    #[test]
+    fn embedded_default_round_trips_through_save_format() {
+        // Serializing then re-parsing the embedded default must yield the
+        // same theme + same widget ids — guards against a Serialize derive
+        // landing inconsistent with Deserialize on any sub-type.
+        let cfg = Config::embedded_default();
+        let serialized = toml::to_string_pretty(&cfg).expect("serialise");
+        let round_tripped: Config = toml::from_str(&serialized).expect("re-parse");
+        assert_eq!(round_tripped.theme, cfg.theme);
+        let original_ids: Vec<_> = cfg.widgets.keys().collect();
+        let new_ids: Vec<_> = round_tripped.widgets.keys().collect();
+        assert_eq!(original_ids, new_ids);
     }
 
     #[test]
