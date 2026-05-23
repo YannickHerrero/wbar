@@ -1,6 +1,9 @@
 // Several Palette fields and Tokens are consumed by widgets in later commits.
 #[allow(dead_code)]
 mod theme;
+// Widget-specific config variants are consumed by widget modules in later commits.
+#[allow(dead_code)]
+mod config;
 
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
@@ -15,6 +18,12 @@ fn main() -> eframe::Result {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+
+    let config_path = config::default_path();
+    match config::load(config_path.as_deref()) {
+        Ok(cfg) => tracing::info!(?cfg, "loaded config"),
+        Err(err) => tracing::warn!(error = ?err, "failed to load config, continuing with defaults"),
+    }
 
     let viewport = egui::ViewportBuilder::default()
         .with_title("wbar")

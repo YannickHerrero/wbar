@@ -1,0 +1,38 @@
+# Default wbar config. Copied verbatim when no user config is found at
+# %APPDATA%\wbar\config.toml. Keep this in sync with examples/config.toml.
+
+[bar]
+position = "top"
+height = 32
+
+[font]
+family = "Default"
+size = 13.0
+
+theme = "Paper"
+
+[layout]
+left = ["workspaces"]
+center = ["clock"]
+right = ["cpu", "ram"]
+
+[widgets.workspaces]
+type = "glazewm"
+show_empty = false
+
+[widgets.clock]
+type = "clock"
+format = "%a %d %b  %H:%M"
+tick_seconds = 1
+
+[widgets.cpu]
+type = "sysinfo"
+metric = "cpu"
+format = "CPU {value:>3.0}%"
+interval_seconds = 2
+
+[widgets.ram]
+type = "sysinfo"
+metric = "ram"
+format = "RAM {used_gb:.1}/{total_gb:.1}G"
+interval_seconds = 2

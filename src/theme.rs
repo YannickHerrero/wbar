@@ -1,6 +1,7 @@
 use eframe::egui::{Color32, Context, Stroke, Visuals};
+use serde::Deserialize;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Deserialize)]
 pub enum Theme {
     #[default]
     Paper,
