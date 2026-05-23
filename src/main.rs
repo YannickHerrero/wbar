@@ -225,6 +225,10 @@ struct WbarApp {
     glazewm: GlazewmClient,
     pinned: bool,
     visible: bool,
+    /// Cached monitor size from the first frame that reported one. Used by
+    /// pin_to_edge so re-pinning works even when the window is currently
+    /// parked off-screen and the viewport's reported monitor_size is None.
+    monitor_size: Option<egui::Vec2>,
     hot: Option<HotReload>,
     appbar: Option<AppBar>,
     tray: Option<Tray>,
@@ -250,6 +254,7 @@ impl WbarApp {
             glazewm,
             pinned: false,
             visible: true,
+            monitor_size: None,
             hot,
             appbar: None,
             tray,
@@ -302,14 +307,26 @@ impl WbarApp {
     fn apply_visibility(&mut self, ctx: &egui::Context) {
         if self.visible {
             tracing::info!("showing bar");
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            // The next register_appbar() call will re-claim AppBar space.
+            // Force pin_to_edge to run again on the next update, which
+            // re-positions the window back on-screen. register_appbar
+            // reclaims the AppBar reservation right after.
+            self.pinned = false;
         } else {
             tracing::info!("hiding bar");
             // Drop the AppBar first so other windows reflow before the
-            // hide takes effect, avoiding a one-frame visual glitch.
+            // move takes effect, avoiding a one-frame visual glitch.
             self.appbar = None;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            // Park the window far off-screen instead of using
+            // ViewportCommand::Visible(false). Hiding the root viewport
+            // makes eframe stop scheduling paint cycles for it, and
+            // request_repaint() from the tray handler no longer wakes
+            // update() — so clicking Toggle a second time would do
+            // nothing. Off-screen keeps the viewport "visible" to eframe
+            // and the message pump while being invisible to the user.
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                -32000.0, -32000.0,
+            )));
+            self.pinned = false;
         }
     }
 
@@ -383,14 +400,20 @@ impl WbarApp {
         }
     }
 
-    /// On the first frame the OS reports a monitor size, stretch the window to
-    /// full monitor width at the configured edge.
+    /// On the first frame the OS reports a monitor size, stretch the window
+    /// to full monitor width at the configured edge. The size is cached so
+    /// re-pinning works while the window is parked off-screen during a hide
+    /// (where viewport().monitor_size may not report sensibly).
     fn pin_to_edge(&mut self, ctx: &egui::Context) {
         if self.pinned {
             return;
         }
-        let monitor_size = ctx.input(|i| i.viewport().monitor_size);
-        let Some(monitor_size) = monitor_size else {
+        if self.monitor_size.is_none()
+            && let Some(s) = ctx.input(|i| i.viewport().monitor_size)
+        {
+            self.monitor_size = Some(s);
+        }
+        let Some(monitor_size) = self.monitor_size else {
             return;
         };
         let height = self.cfg.bar.height;
