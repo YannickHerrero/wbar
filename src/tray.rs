@@ -29,6 +29,7 @@ pub enum TrayEventKind {
 #[cfg(windows)]
 mod imp {
     use anyhow::Result;
+    use eframe::egui;
     use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem};
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
@@ -44,7 +45,7 @@ mod imp {
         quit_id: MenuId,
     }
 
-    pub fn build() -> Result<Tray> {
+    pub fn build(ctx: egui::Context) -> Result<Tray> {
         let menu = Menu::new();
         let toggle = MenuItem::new("Toggle bar", true, None);
         let show = MenuItem::new("Show bar", true, None);
@@ -69,6 +70,15 @@ mod imp {
             .with_tooltip("wbar")
             .with_icon(icon)
             .build()?;
+
+        // Without this handler, MenuEvents land in the global channel but
+        // nothing wakes the eframe event loop while the bar window is
+        // hidden — so Show / Quit clicks would do nothing once the bar is
+        // hidden. request_repaint() forces an update tick which then drains
+        // the channel via tray::poll.
+        MenuEvent::set_event_handler(Some(move |_event| {
+            ctx.request_repaint();
+        }));
 
         tracing::info!("tray icon ready (right-click for menu)");
         Ok(Tray {
@@ -130,12 +140,13 @@ mod imp {
 #[cfg(not(windows))]
 mod stub {
     use anyhow::Result;
+    use eframe::egui;
 
     pub use super::TrayEventKind as TrayEvent;
 
     pub struct Tray;
 
-    pub fn build() -> Result<Tray> {
+    pub fn build(_ctx: egui::Context) -> Result<Tray> {
         anyhow::bail!("tray icon is only implemented on Windows")
     }
 

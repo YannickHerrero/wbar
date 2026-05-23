@@ -99,7 +99,7 @@ fn main() -> eframe::Result {
 
             let glazewm = GlazewmClient::spawn(cc.egui_ctx.clone());
 
-            let tray = match tray::build() {
+            let tray = match tray::build(cc.egui_ctx.clone()) {
                 Ok(t) => Some(t),
                 Err(err) => {
                     tracing::warn!(error = ?err, "tray icon disabled");
