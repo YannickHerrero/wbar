@@ -242,6 +242,7 @@ pub enum SysinfoMetric {
     Cpu,
     Ram,
     Network,
+    Battery,
 }
 
 fn default_interval_seconds() -> u64 {
@@ -297,5 +298,20 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.theme, Theme::Paper);
         assert!(cfg.widgets.is_empty());
+    }
+
+    #[test]
+    fn parses_battery_metric() {
+        let raw = r#"
+            [widgets.bat]
+            type = "sysinfo"
+            metric = "battery"
+            format = "{value:.0}%"
+        "#;
+        let cfg: Config = toml::from_str(raw).expect("parses");
+        let WidgetConfig::Sysinfo(s) = cfg.widgets.get("bat").expect("present") else {
+            panic!("expected sysinfo variant");
+        };
+        assert_eq!(s.metric, SysinfoMetric::Battery);
     }
 }

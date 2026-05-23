@@ -27,6 +27,8 @@ impl SysinfoWidget {
                 RefreshKind::nothing().with_memory(MemoryRefreshKind::everything())
             }
             SysinfoMetric::Network => RefreshKind::nothing(),
+            // Battery is handled directly via Win32 in the next commit.
+            SysinfoMetric::Battery => RefreshKind::nothing(),
         };
         let networks =
             matches!(cfg.metric, SysinfoMetric::Network).then(Networks::new_with_refreshed_list);
@@ -119,6 +121,9 @@ impl SysinfoWidget {
                 m.insert("tx_mbps".into(), tx_bps / (1024.0 * 1024.0));
                 Some(m)
             }
+            // Real query lands in the next commit; for now the widget stays
+            // empty rather than rendering stale text.
+            SysinfoMetric::Battery => None,
         };
 
         if let Some(vars) = vars {
