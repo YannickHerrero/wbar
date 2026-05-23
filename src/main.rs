@@ -12,7 +12,8 @@ mod config;
 mod fonts;
 mod glazewm;
 mod hotreload;
-// Listener spun up + receiver consumed in the next two commits.
+// The server side (ipc::spawn) is wired up in the next commit. ipc::send is
+// already consumed by the CLI client below.
 #[allow(dead_code)]
 mod ipc;
 mod tray;
@@ -38,6 +39,13 @@ const RIGHT_EDGE_CUSHION: f32 = 8.0;
 const REGION_ITEM_SPACING: f32 = 14.0;
 
 fn main() -> eframe::Result {
+    // CLI client mode: any first argv that matches a known subcommand sends
+    // the command to the already-running wbar over IPC and exits, instead of
+    // booting a second bar instance.
+    if let Some(code) = handle_cli() {
+        std::process::exit(code);
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -101,6 +109,66 @@ fn main() -> eframe::Result {
             Ok(Box::new(WbarApp::new(cfg, hot, glazewm, tray)))
         }),
     )
+}
+
+/// Inspect argv. Returns `Some(exit_code)` if a subcommand was handled (the
+/// process should exit with that code); `None` if no subcommand was given
+/// and the bar should run normally.
+#[allow(clippy::print_stdout, clippy::print_stderr)]
+fn handle_cli() -> Option<i32> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        return None;
+    }
+    let cmd = match args[1].as_str() {
+        "--help" | "-h" | "help" => {
+            print_usage(&args[0]);
+            return Some(0);
+        }
+        "toggle" | "show" | "hide" | "quit" => args[1].clone(),
+        "set-theme" => {
+            let Some(name) = args.get(2) else {
+                eprintln!("set-theme requires a theme name");
+                eprintln!("usage: {} set-theme <Paper|Stone|Sage|Clay|Ink>", args[0]);
+                return Some(2);
+            };
+            format!("set-theme {name}")
+        }
+        other => {
+            eprintln!("unknown command: {other}");
+            print_usage(&args[0]);
+            return Some(2);
+        }
+    };
+
+    match ipc::send(&cmd) {
+        Ok(reply) => {
+            if let Some(rest) = reply.strip_prefix("error:") {
+                eprintln!("error:{rest}");
+                Some(1)
+            } else {
+                Some(0)
+            }
+        }
+        Err(err) => {
+            eprintln!("ipc error: {err:#}");
+            Some(1)
+        }
+    }
+}
+
+#[allow(clippy::print_stdout, clippy::print_stderr)]
+fn print_usage(prog: &str) {
+    eprintln!("wbar — minimalist status bar for Windows + GlazeWM");
+    eprintln!();
+    eprintln!("usage:");
+    eprintln!("  {prog}                     Run the bar (no arguments)");
+    eprintln!("  {prog} toggle              Show/hide the bar");
+    eprintln!("  {prog} show                Show the bar");
+    eprintln!("  {prog} hide                Hide the bar (releases the AppBar reservation)");
+    eprintln!("  {prog} quit                Exit the running bar");
+    eprintln!("  {prog} set-theme <name>    Switch theme (Paper|Stone|Sage|Clay|Ink)");
+    eprintln!("  {prog} --help              Show this message");
 }
 
 struct WbarApp {
