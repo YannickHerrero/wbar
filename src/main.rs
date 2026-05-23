@@ -1,8 +1,11 @@
-#[allow(dead_code)] // wired up in the next commit
+// Several Palette fields and Tokens are consumed by widgets in later commits.
+#[allow(dead_code)]
 mod theme;
 
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
+
+use crate::theme::Theme;
 
 const BAR_HEIGHT: f32 = 32.0;
 
@@ -31,7 +34,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "wbar",
         options,
-        Box::new(|_cc| Ok(Box::new(WbarApp::new()))),
+        Box::new(|cc| {
+            theme::apply(&cc.egui_ctx, Theme::default());
+            Ok(Box::new(WbarApp::new()))
+        }),
     )
 }
 

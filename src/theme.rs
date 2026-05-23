@@ -1,4 +1,4 @@
-use eframe::egui::Color32;
+use eframe::egui::{Color32, Context, Stroke, Visuals};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Theme {
@@ -118,4 +118,37 @@ pub fn tokens() -> Tokens {
         font_page_title: 22.0,
         field_label_width: 160.0,
     }
+}
+
+pub fn apply(ctx: &Context, theme: Theme) {
+    let p = palette(theme);
+    let mut v = if matches!(theme, Theme::Ink) {
+        Visuals::dark()
+    } else {
+        Visuals::light()
+    };
+
+    v.window_fill = p.paper;
+    v.panel_fill = p.paper;
+    v.extreme_bg_color = p.paper;
+    v.override_text_color = Some(p.ink);
+
+    v.selection.bg_fill = p.accent;
+    v.selection.stroke = Stroke::new(1.0, p.accent);
+    v.hyperlink_color = p.accent;
+
+    let ink_stroke = Stroke::new(1.0, p.ink);
+    v.widgets.noninteractive.fg_stroke = ink_stroke;
+    v.widgets.inactive.fg_stroke = ink_stroke;
+    v.widgets.active.fg_stroke = ink_stroke;
+    v.widgets.hovered.fg_stroke = ink_stroke;
+
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.ink_faint);
+
+    v.widgets.inactive.bg_fill = p.muted;
+    v.widgets.inactive.weak_bg_fill = p.muted;
+    v.widgets.hovered.bg_fill = p.muted;
+    v.widgets.hovered.weak_bg_fill = p.muted;
+
+    ctx.set_visuals(v);
 }
