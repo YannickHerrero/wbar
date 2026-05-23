@@ -444,63 +444,74 @@ impl WbarApp {
 
 impl WbarApp {
     fn draw_regions(&mut self, ui: &mut egui::Ui) {
-        // horizontal_centered (vs plain horizontal) makes the outer row fill
-        // the panel's height and lays out children with cross-axis = Center,
-        // so labels sit on the bar's vertical midline instead of the top.
-        ui.horizontal_centered(|ui| {
-            let bar_h = self.bar_height();
-            let third = ui.available_width() / 3.0;
-            let slot = egui::vec2(third, bar_h);
+        // Compute three equal rects explicitly. The previous
+        // horizontal_centered + 3·allocate_ui_with_layout chain relied on
+        // Layout::left_to_right's default main_align = Center, which
+        // re-centred the whole row whenever item_spacing (default ≈8px)
+        // pushed the three thirds past the panel width. That left the
+        // right slot's right edge well short of the screen edge.
+        let max_rect = ui.max_rect();
+        let bar_h = self.bar_height();
+        let total_w = max_rect.width();
+        let third = total_w / 3.0;
+        let top = max_rect.top();
 
-            ui.allocate_ui_with_layout(
-                slot,
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    // Force the slot to claim its full third even when no
-                    // widget renders anything (e.g. workspaces hidden because
-                    // glazewm isn't running). Without this, allocate_ui only
-                    // advances the parent cursor by the actual contents size,
-                    // so an empty left slot collapses to zero and the centre
-                    // clock slides into the left third.
-                    ui.set_min_size(slot);
-                    ui.spacing_mut().item_spacing.x = REGION_ITEM_SPACING;
-                    for id in self.cfg.layout.left.clone() {
-                        self.widgets.render(ui, &id);
-                    }
-                },
-            );
+        // Reserve the full panel area so the CentralPanel's min_rect
+        // matches what we actually paint into.
+        ui.allocate_rect(max_rect, egui::Sense::hover());
 
-            ui.allocate_ui_with_layout(
-                slot,
-                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                |ui| {
-                    ui.set_min_size(slot);
-                    // No inner horizontal_centered: that wrapper builds a new
-                    // left-to-right layout starting at the slot's left edge,
-                    // pushing the clock to the left. centered_and_justified
-                    // by itself centres a single label both axes.
-                    for id in self.cfg.layout.center.clone() {
-                        self.widgets.render(ui, &id);
-                    }
-                },
-            );
+        let left_rect =
+            egui::Rect::from_min_size(egui::pos2(max_rect.left(), top), egui::vec2(third, bar_h));
+        let center_rect = egui::Rect::from_min_size(
+            egui::pos2(max_rect.left() + third, top),
+            egui::vec2(third, bar_h),
+        );
+        let right_rect = egui::Rect::from_min_size(
+            egui::pos2(max_rect.left() + 2.0 * third, top),
+            egui::vec2(third, bar_h),
+        );
 
-            ui.allocate_ui_with_layout(
-                slot,
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    ui.set_min_size(slot);
-                    ui.spacing_mut().item_spacing.x = REGION_ITEM_SPACING;
-                    // In a right_to_left layout, add_space is consumed at the
-                    // right edge first. This nudges the first widget inward
-                    // so glyphs with positive right-side bearing (some Nerd
-                    // Font battery icons) don't paint past the slot edge.
-                    ui.add_space(RIGHT_EDGE_CUSHION);
-                    for id in self.cfg.layout.right.clone() {
-                        self.widgets.render(ui, &id);
-                    }
-                },
-            );
-        });
+        let left = self.cfg.layout.left.clone();
+        let center = self.cfg.layout.center.clone();
+        let right = self.cfg.layout.right.clone();
+
+        self.render_region(
+            ui,
+            left_rect,
+            egui::Layout::left_to_right(egui::Align::Center),
+            &left,
+        );
+        self.render_region(
+            ui,
+            center_rect,
+            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+            &center,
+        );
+        self.render_region(
+            ui,
+            right_rect,
+            egui::Layout::right_to_left(egui::Align::Center),
+            &right,
+        );
+    }
+
+    fn render_region(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        layout: egui::Layout,
+        ids: &[String],
+    ) {
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
+        child.spacing_mut().item_spacing.x = REGION_ITEM_SPACING;
+        // For right_to_left, add_space is consumed at the right edge so
+        // glyphs with positive right-side bearing don't paint past the
+        // slot edge. left_to_right gets a leading cushion for symmetry.
+        if matches!(layout.main_dir, egui::Direction::RightToLeft) {
+            child.add_space(RIGHT_EDGE_CUSHION);
+        }
+        for id in ids {
+            self.widgets.render(&mut child, id);
+        }
     }
 }
