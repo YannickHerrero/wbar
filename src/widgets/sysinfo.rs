@@ -174,21 +174,24 @@ impl Widget for SysinfoWidget {
     fn render(&mut self, ui: &mut egui::Ui) {
         self.refresh_if_due();
 
-        // Explicit left_to_right (not ui.horizontal!) — ui.horizontal inherits
-        // the parent layout's direction, and the right region uses
-        // right_to_left, which would flip icon and value inside each widget.
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            // 4px gap between the icon and the value, local to this row.
-            ui.spacing_mut().item_spacing.x = 4.0;
-            if let Some(icon) = self.current_icon() {
-                ui.label(icon);
-            }
-            if self.should_warn() {
-                ui.colored_label(self.warn_color, &self.rendered);
-            } else {
-                ui.label(&self.rendered);
-            }
-        });
+        // Single label per widget — keeps each sysinfo widget atomic in the
+        // parent region's flow. A previous attempt used ui.with_layout to
+        // force icon-before-value ordering inside a right_to_left parent,
+        // but with_layout reserves the parent's available_size for the
+        // child, so each widget claimed the whole remaining region width
+        // and consecutive widgets started overlapping. Embedding the icon
+        // directly in the rendered string sidesteps both the direction-
+        // inheritance issue and the rect-overclaim issue.
+        let body = if let Some(icon) = self.current_icon() {
+            format!("{icon}  {}", self.rendered)
+        } else {
+            self.rendered.clone()
+        };
+        if self.should_warn() {
+            ui.colored_label(self.warn_color, body);
+        } else {
+            ui.label(body);
+        }
 
         ui.ctx().request_repaint_after(self.interval());
     }
