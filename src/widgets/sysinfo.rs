@@ -156,9 +156,12 @@ impl Widget for SysinfoWidget {
     fn render(&mut self, ui: &mut egui::Ui) {
         self.refresh_if_due();
 
-        // Match zebar's spacing: a small gap between the icon and the value.
-        ui.spacing_mut().item_spacing.x = 4.0;
-        ui.horizontal(|ui| {
+        // Explicit left_to_right (not ui.horizontal!) — ui.horizontal inherits
+        // the parent layout's direction, and the right region uses
+        // right_to_left, which would flip icon and value inside each widget.
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            // 4px gap between the icon and the value, local to this row.
+            ui.spacing_mut().item_spacing.x = 4.0;
             if let Some(icon) = &self.cfg.icon {
                 ui.label(icon);
             }
