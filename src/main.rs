@@ -5,6 +5,7 @@ mod theme;
 // Some widget-specific config fields are read by widgets in later commits.
 #[allow(dead_code)]
 mod config;
+mod glazewm;
 mod hotreload;
 mod widgets;
 
@@ -66,6 +67,8 @@ fn main() -> eframe::Result {
                     None
                 }
             });
+
+            glazewm::spawn(cc.egui_ctx.clone());
 
             Ok(Box::new(WbarApp::new(cfg, hot)))
         }),
