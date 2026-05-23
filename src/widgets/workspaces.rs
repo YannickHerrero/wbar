@@ -62,13 +62,17 @@ impl Widget for WorkspacesWidget {
             // Smaller pill font + a touch of vertical inner padding keeps
             // the pill comfortably inside the 28px bar with visible
             // breathing room above and below, without changing
-            // bar.height.
+            // bar.height. Critically, we also drop interact_size.y to 0
+            // inside the pill — otherwise egui pads any label to the
+            // interactable-widget minimum (≈20px), which made the pill
+            // fill the bar regardless of the font size.
             Frame::new()
                 .fill(bg)
                 .stroke(Stroke::NONE)
                 .corner_radius(self.radius)
-                .inner_margin(egui::Margin::symmetric(8, 3))
+                .inner_margin(egui::Margin::symmetric(8, 2))
                 .show(ui, |ui| {
+                    ui.spacing_mut().interact_size.y = 0.0;
                     ui.label(
                         RichText::new(&ws.display_name)
                             .size(WORKSPACE_FONT_SIZE)
