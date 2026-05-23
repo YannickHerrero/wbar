@@ -8,7 +8,7 @@ mod config;
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
-use crate::theme::Theme;
+use crate::config::Config;
 
 const BAR_HEIGHT: f32 = 32.0;
 
@@ -20,10 +20,16 @@ fn main() -> eframe::Result {
         .init();
 
     let config_path = config::default_path();
-    match config::load(config_path.as_deref()) {
-        Ok(cfg) => tracing::info!(?cfg, "loaded config"),
-        Err(err) => tracing::warn!(error = ?err, "failed to load config, continuing with defaults"),
-    }
+    let cfg = match config::load(config_path.as_deref()) {
+        Ok(cfg) => {
+            tracing::info!(?cfg, "loaded config");
+            cfg
+        }
+        Err(err) => {
+            tracing::warn!(error = ?err, "failed to load config, continuing with embedded default");
+            Config::embedded_default()
+        }
+    };
 
     let viewport = egui::ViewportBuilder::default()
         .with_title("wbar")
@@ -43,20 +49,23 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "wbar",
         options,
-        Box::new(|cc| {
-            theme::apply(&cc.egui_ctx, Theme::default());
-            Ok(Box::new(WbarApp::new()))
+        Box::new(move |cc| {
+            theme::apply(&cc.egui_ctx, cfg.theme);
+            Ok(Box::new(WbarApp::new(cfg)))
         }),
     )
 }
 
 struct WbarApp {
+    // Used by layout, font, and widget commits that follow.
+    #[allow(dead_code)]
+    cfg: Config,
     pinned: bool,
 }
 
 impl WbarApp {
-    fn new() -> Self {
-        Self { pinned: false }
+    fn new(cfg: Config) -> Self {
+        Self { cfg, pinned: false }
     }
 
     /// On the first frame the OS has reported the primary monitor size, so we
