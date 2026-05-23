@@ -25,6 +25,9 @@ use crate::hotreload::HotReload;
 use crate::tray::Tray;
 use crate::widgets::Widgets;
 
+/// Horizontal padding between the bar contents and the screen edges.
+const BAR_EDGE_PAD: f32 = 16.0;
+
 fn main() -> eframe::Result {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -216,12 +219,14 @@ impl eframe::App for WbarApp {
 
         // CentralPanel defaults to a Frame with ~8px margins on every side,
         // which would eat most of a 28px bar and leave too little vertical
-        // room for text to centre. Replace it with a zero-margin frame so
-        // widgets get the full bar height to lay out in.
+        // room for text to centre. Replace it with a zero-vertical-margin
+        // frame so widgets get the full bar height; horizontal margin
+        // (BAR_EDGE_PAD) is the breathing room between the bar contents and
+        // the screen edges.
         let bg = ctx.style().visuals.panel_fill;
         let frame_style = egui::Frame::new()
             .fill(bg)
-            .inner_margin(egui::Margin::symmetric(8, 0));
+            .inner_margin(egui::Margin::symmetric(BAR_EDGE_PAD as i8, 0));
         egui::CentralPanel::default()
             .frame(frame_style)
             .show(ctx, |ui| {
@@ -268,11 +273,13 @@ impl WbarApp {
                 egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                 |ui| {
                     ui.set_min_size(slot);
-                    ui.horizontal_centered(|ui| {
-                        for id in self.cfg.layout.center.clone() {
-                            self.widgets.render(ui, &id);
-                        }
-                    });
+                    // No inner horizontal_centered: that wrapper builds a new
+                    // left-to-right layout starting at the slot's left edge,
+                    // pushing the clock to the left. centered_and_justified
+                    // by itself centres a single label both axes.
+                    for id in self.cfg.layout.center.clone() {
+                        self.widgets.render(ui, &id);
+                    }
                 },
             );
 
