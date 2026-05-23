@@ -9,6 +9,7 @@ mod theme;
 // Some widget-specific config fields are read by widgets in later commits.
 #[allow(dead_code)]
 mod config;
+mod fonts;
 mod glazewm;
 mod hotreload;
 mod widgets;
@@ -60,6 +61,7 @@ fn main() -> eframe::Result {
         "wbar",
         options,
         Box::new(move |cc| {
+            fonts::install_nerd_font_fallback(&cc.egui_ctx);
             let palette = cfg.effective_palette();
             theme::apply(&cc.egui_ctx, &palette, theme::is_dark(cfg.theme));
             theme::apply_font_size(&cc.egui_ctx, cfg.font.size);
