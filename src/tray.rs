@@ -123,10 +123,10 @@ mod imp {
                 Some(TrayEvent::Toggle)
             } else if event.id == tray.quit_id {
                 Some(TrayEvent::Quit)
-            } else if let Some(theme) = tray.theme_ids.get(&event.id) {
-                Some(TrayEvent::SetTheme(*theme))
             } else {
-                None
+                tray.theme_ids
+                    .get(&event.id)
+                    .map(|theme| TrayEvent::SetTheme(*theme))
             };
             if let Some(m) = mapped {
                 tracing::info!(event = ?m, "tray::poll matched event");

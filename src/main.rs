@@ -90,26 +90,12 @@ fn main() -> eframe::Result {
             theme::apply(&cc.egui_ctx, &palette, theme::is_dark(cfg.theme));
             theme::apply_font_size(&cc.egui_ctx, cfg.font.size);
 
-            // Keepalive: when the bar is hidden the root viewport stops
-            // requesting paints, so the eframe loop sleeps and tray / IPC
-            // events that flip visibility back on never fire update().
-            // Tick the context every 500ms so update() runs at least twice
-            // a second regardless of viewport visibility — cheap (we
-            // already redraw the clock every second) and means Toggle from
-            // the tray always re-shows the bar.
-            let keepalive_ctx = cc.egui_ctx.clone();
-            std::thread::spawn(move || {
-                tracing::info!("keepalive thread started");
-                let mut tick = 0u64;
-                loop {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    keepalive_ctx.request_repaint();
-                    tick = tick.wrapping_add(1);
-                    if tick % 20 == 0 {
-                        tracing::debug!(tick, "keepalive still alive");
-                    }
-                }
-            });
+            // (No keepalive thread — eframe 0.32 doesn't reliably wake on
+            // ctx.request_repaint() from background threads on Windows.
+            // appbar::register installs a Win32 SetTimer on the bar's
+            // HWND instead, which posts WM_TIMER directly into winit's
+            // message queue and gives eframe a chance to see pending
+            // repaints set by tray / IPC handlers.)
             // A status bar shouldn't expose drag-selection on its labels —
             // the cursor changes to a text caret on hover and click-drag
             // selects the value, which is noise nobody wants here.

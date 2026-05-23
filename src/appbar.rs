@@ -37,8 +37,17 @@ mod imp {
         SHAppBarMessage,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos,
+        GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOZORDER, SetTimer,
+        SetWindowPos,
     };
+
+    /// Win32 timer id we use to keep winit's message pump waking up. Picked
+    /// arbitrarily; only this module sets a timer on the bar's HWND.
+    const WAKE_TIMER_ID: usize = 1;
+    /// 200 ms = 5 wake-ups per second. Cheap (the message pump just
+    /// processes a WM_TIMER no-op) and gives the tray a worst-case 200 ms
+    /// latency between click and apply.
+    const WAKE_TIMER_INTERVAL_MS: u32 = 200;
 
     pub struct AppBar {
         hwnd: HWND,
@@ -145,12 +154,26 @@ mod imp {
             )
         };
 
+        // Install a periodic WM_TIMER on our HWND so winit's message pump
+        // wakes regularly. Without this, eframe 0.32 on Windows doesn't
+        // reliably respond to ctx.request_repaint() from background
+        // threads (tray handler, ipc handler, glazewm reconnect, ...), so
+        // tray clicks could sit in the channel for tens of seconds before
+        // update() finally ran. SetTimer with HWND owner posts WM_TIMER
+        // straight into the thread's message queue. Re-calling SetTimer
+        // with the same id replaces the existing timer, so it's safe to
+        // call again on AppBar re-register after a Hide→Show.
+        unsafe {
+            SetTimer(Some(hwnd), WAKE_TIMER_ID, WAKE_TIMER_INTERVAL_MS, None);
+        }
+
         tracing::info!(
             edge = ?edge,
             left = abd.rc.left,
             top = abd.rc.top,
             width = w,
             height = h,
+            wake_timer_ms = WAKE_TIMER_INTERVAL_MS,
             "appbar registered",
         );
 
