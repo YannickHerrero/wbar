@@ -2,9 +2,21 @@
 name = "wbar"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 description = "Minimalist status bar for Windows + GlazeWM"
 license = "MIT"
 repository = "https://github.com/yannickherrero/wbar"
 readme = "README.md"
 
 [dependencies]
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+unused_must_use = "warn"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
