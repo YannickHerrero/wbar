@@ -193,12 +193,12 @@ impl Widget for SysinfoWidget {
         // issue.
         let padded = pad_left_to(&self.rendered, VALUE_MIN_WIDTH);
         let body = if let Some(icon) = self.current_icon() {
-            // No explicit separator — VALUE_MIN_WIDTH padding adds the
-            // visual gap (≥1 char for typical "NN%" values) without the
-            // extra space the previous render had. For 3-digit values the
-            // icon will touch the first digit; that's the inherent
-            // tradeoff of "tighter spacing + fixed width".
-            format!("{icon}{padded}")
+            // Single space between icon and value, always — for 3-digit
+            // values like "100%" the padding alone wouldn't leave a gap
+            // and the icon would touch the first digit. The total width
+            // is still constant (icon + 1 + VALUE_MIN_WIDTH) so the
+            // no-jitter property is preserved.
+            format!("{icon} {padded}")
         } else {
             padded
         };

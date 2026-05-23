@@ -1,9 +1,14 @@
-use eframe::egui::{self, Color32, Frame, Stroke};
+use eframe::egui::{self, Color32, Frame, RichText, Stroke};
 
 use super::Widget;
 use crate::config::WorkspacesConfig;
 use crate::glazewm::GlazewmClient;
 use crate::theme::Palette;
+
+/// Workspace pill text is intentionally smaller than the body font so the
+/// pill itself doesn't push against the top and bottom of the bar. Matches
+/// zebar's `.workspace { font-size: 10px }` styling.
+const WORKSPACE_FONT_SIZE: f32 = 10.0;
 
 pub struct WorkspacesWidget {
     cfg: WorkspacesConfig,
@@ -54,13 +59,21 @@ impl Widget for WorkspacesWidget {
             } else {
                 (self.inactive_bg, self.inactive_fg)
             };
+            // Smaller pill font + a touch of vertical inner padding keeps
+            // the pill comfortably inside the 28px bar with visible
+            // breathing room above and below, without changing
+            // bar.height.
             Frame::new()
                 .fill(bg)
                 .stroke(Stroke::NONE)
                 .corner_radius(self.radius)
-                .inner_margin(egui::Margin::symmetric(8, 2))
+                .inner_margin(egui::Margin::symmetric(8, 3))
                 .show(ui, |ui| {
-                    ui.colored_label(fg, &ws.display_name);
+                    ui.label(
+                        RichText::new(&ws.display_name)
+                            .size(WORKSPACE_FONT_SIZE)
+                            .color(fg),
+                    );
                 });
         }
         // show_empty consumed so the field doesn't trip dead_code analysis
