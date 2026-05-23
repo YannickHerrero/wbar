@@ -170,27 +170,37 @@ impl SysinfoWidget {
     }
 }
 
+/// Minimum visual width (chars) for the rendered value half. Pads with
+/// leading spaces so consecutive samples like "9%" and "100%" occupy the
+/// same horizontal real estate, keeping neighbouring widgets from
+/// jittering as digit counts change. The user's format spec can produce
+/// a longer string (e.g. "RAM 12.3G") — in that case no padding is
+/// added.
+const VALUE_MIN_WIDTH: usize = 4;
+
 impl Widget for SysinfoWidget {
     fn render(&mut self, ui: &mut egui::Ui) {
         self.refresh_if_due();
 
-        // Single label per widget — keeps each sysinfo widget atomic in the
-        // parent region's flow. A previous attempt used ui.with_layout to
-        // force icon-before-value ordering inside a right_to_left parent,
-        // but with_layout reserves the parent's available_size for the
-        // child, so each widget claimed the whole remaining region width
-        // and consecutive widgets started overlapping. Embedding the icon
-        // directly in the rendered string sidesteps both the direction-
-        // inheritance issue and the rect-overclaim issue.
+        // Single label per widget — keeps each sysinfo widget atomic in
+        // the parent region's flow. A previous attempt used ui.with_layout
+        // to force icon-before-value ordering inside a right_to_left
+        // parent, but with_layout reserves the parent's available_size
+        // for the child, so each widget claimed the whole remaining
+        // region width and consecutive widgets started overlapping.
+        // Embedding the icon directly in the rendered string sidesteps
+        // both the direction-inheritance issue and the rect-overclaim
+        // issue.
+        let padded = pad_left_to(&self.rendered, VALUE_MIN_WIDTH);
         let body = if let Some(icon) = self.current_icon() {
-            // Single space between icon and value — tight but legible. The
-            // value half is expected to use a right-aligned format spec
-            // (e.g. "{value:>3.0}%") so the overall width stays constant
-            // as the number changes from 1 to 2 to 3 digits, keeping
-            // neighbouring widgets from jumping on each redraw.
-            format!("{icon} {}", self.rendered)
+            // No explicit separator — VALUE_MIN_WIDTH padding adds the
+            // visual gap (≥1 char for typical "NN%" values) without the
+            // extra space the previous render had. For 3-digit values the
+            // icon will touch the first digit; that's the inherent
+            // tradeoff of "tighter spacing + fixed width".
+            format!("{icon}{padded}")
         } else {
-            self.rendered.clone()
+            padded
         };
         if self.should_warn() {
             ui.colored_label(self.warn_color, body);
@@ -199,6 +209,24 @@ impl Widget for SysinfoWidget {
         }
 
         ui.ctx().request_repaint_after(self.interval());
+    }
+}
+
+/// Right-align `s` within `min` characters by prefixing spaces. Strings
+/// already `>= min` chars wide are returned unchanged. Uses `chars().count()`
+/// so multi-byte glyphs in the value half (rare) still count correctly.
+fn pad_left_to(s: &str, min: usize) -> String {
+    let len = s.chars().count();
+    if len >= min {
+        s.to_string()
+    } else {
+        let pad = min - len;
+        let mut out = String::with_capacity(pad + s.len());
+        for _ in 0..pad {
+            out.push(' ');
+        }
+        out.push_str(s);
+        out
     }
 }
 
