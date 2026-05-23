@@ -18,6 +18,8 @@ mod widgets;
 
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::{Layer, SubscriberExt};
+use tracing_subscriber::util::SubscriberInitExt;
 
 use std::sync::mpsc::Receiver;
 
@@ -51,13 +53,8 @@ fn main() -> eframe::Result {
         std::process::exit(code);
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
-
     let config_path = config::default_path();
+    init_tracing(config_path.as_deref());
     let cfg = match config::load(config_path.as_deref()) {
         Ok(cfg) => {
             tracing::info!(?cfg, "loaded config");
@@ -102,9 +99,15 @@ fn main() -> eframe::Result {
             // the tray always re-shows the bar.
             let keepalive_ctx = cc.egui_ctx.clone();
             std::thread::spawn(move || {
+                tracing::info!("keepalive thread started");
+                let mut tick = 0u64;
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     keepalive_ctx.request_repaint();
+                    tick = tick.wrapping_add(1);
+                    if tick % 20 == 0 {
+                        tracing::debug!(tick, "keepalive still alive");
+                    }
                 }
             });
             // A status bar shouldn't expose drag-selection on its labels —
@@ -153,6 +156,49 @@ fn main() -> eframe::Result {
             )))
         }),
     )
+}
+
+/// Initialise tracing with two layers:
+///   - stderr (visible in debug builds where the console subsystem is
+///     attached; controlled by RUST_LOG, defaults to info).
+///   - file at <config_dir>/wbar.log, truncated on every daemon start,
+///     fixed at debug level so a release build always has a readable
+///     diagnostic trail. Path is logged on the first frame so the user
+///     can find it. Falls back to stderr-only if the log file can't be
+///     created (e.g. directory missing on first run before save).
+fn init_tracing(config_path: Option<&std::path::Path>) {
+    let console_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let console_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(console_filter);
+
+    let log_path = config_path
+        .and_then(|p| p.parent())
+        .map(|d| d.join("wbar.log"));
+    let file_layer = log_path.as_ref().and_then(|path| {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok()?;
+        }
+        let file = std::fs::File::create(path).ok()?;
+        Some(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::sync::Mutex::new(file))
+                .with_ansi(false)
+                .with_filter(EnvFilter::new("wbar=debug,info")),
+        )
+    });
+
+    tracing_subscriber::registry()
+        .with(console_layer)
+        .with(file_layer)
+        .init();
+
+    if let Some(p) = &log_path {
+        tracing::info!(log = %p.display(), "writing debug log to file");
+    } else {
+        tracing::info!("no config dir resolved, debug log file disabled");
+    }
 }
 
 /// Inspect argv. Returns `Some(exit_code)` if a subcommand was handled (the
@@ -272,6 +318,7 @@ impl WbarApp {
         if let Some(t) = &self.tray
             && let Some(event) = tray::poll(t)
         {
+            tracing::info!(?event, prev_visible, "handle_controls applying tray event");
             match event {
                 TrayEvent::Toggle => self.visible = !self.visible,
                 TrayEvent::Quit => quit_requested = true,

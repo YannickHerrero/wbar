@@ -97,7 +97,8 @@ mod imp {
         // own channel from inside the handler — that way the handler still
         // wakes the egui loop and tray::poll still sees every click.
         let (tx, rx) = mpsc::channel::<MenuEvent>();
-        MenuEvent::set_event_handler(Some(move |event| {
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            tracing::info!(id = ?event.id, "tray handler fired");
             let _ = tx.send(event);
             ctx.request_repaint();
         }));
@@ -117,15 +118,22 @@ mod imp {
     pub fn poll(tray: &Tray) -> Option<TrayEvent> {
         let mut latest = None;
         while let Ok(event) = tray.rx.try_recv() {
-            latest = if event.id == tray.toggle_id {
+            tracing::debug!(id = ?event.id, "tray::poll drained event");
+            let mapped = if event.id == tray.toggle_id {
                 Some(TrayEvent::Toggle)
             } else if event.id == tray.quit_id {
                 Some(TrayEvent::Quit)
             } else if let Some(theme) = tray.theme_ids.get(&event.id) {
                 Some(TrayEvent::SetTheme(*theme))
             } else {
-                latest
+                None
             };
+            if let Some(m) = mapped {
+                tracing::info!(event = ?m, "tray::poll matched event");
+                latest = Some(m);
+            } else {
+                tracing::warn!(id = ?event.id, "tray::poll unmatched event id");
+            }
         }
         latest
     }
