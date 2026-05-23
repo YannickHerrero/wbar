@@ -4,11 +4,13 @@ mod theme;
 // Widget-specific config variants are consumed by widget modules in later commits.
 #[allow(dead_code)]
 mod config;
+mod hotreload;
 
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
+use crate::hotreload::HotReload;
 
 const BAR_HEIGHT: f32 = 32.0;
 
@@ -52,7 +54,16 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let palette = cfg.effective_palette();
             theme::apply(&cc.egui_ctx, &palette, theme::is_dark(cfg.theme));
-            Ok(Box::new(WbarApp::new(cfg)))
+
+            let hot = config_path.and_then(|p| match hotreload::spawn(p, cc.egui_ctx.clone()) {
+                Ok(h) => Some(h),
+                Err(err) => {
+                    tracing::warn!(error = ?err, "hot reload disabled");
+                    None
+                }
+            });
+
+            Ok(Box::new(WbarApp::new(cfg, hot)))
         }),
     )
 }
@@ -60,11 +71,32 @@ fn main() -> eframe::Result {
 struct WbarApp {
     cfg: Config,
     pinned: bool,
+    hot: Option<HotReload>,
 }
 
 impl WbarApp {
-    fn new(cfg: Config) -> Self {
-        Self { cfg, pinned: false }
+    fn new(cfg: Config, hot: Option<HotReload>) -> Self {
+        Self {
+            cfg,
+            pinned: false,
+            hot,
+        }
+    }
+
+    /// Drain any pending config reloads from the watcher and apply the latest.
+    fn drain_reloads(&mut self, ctx: &egui::Context) {
+        let Some(hot) = &self.hot else {
+            return;
+        };
+        let mut latest = None;
+        while let Ok(cfg) = hot.rx.try_recv() {
+            latest = Some(cfg);
+        }
+        if let Some(cfg) = latest {
+            let palette = cfg.effective_palette();
+            theme::apply(ctx, &palette, theme::is_dark(cfg.theme));
+            self.cfg = cfg;
+        }
     }
 
     /// On the first frame the OS has reported the primary monitor size, so we
@@ -93,6 +125,7 @@ impl WbarApp {
 
 impl eframe::App for WbarApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.drain_reloads(ctx);
         self.pin_to_top(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
             self.draw_regions(ui);
