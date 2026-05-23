@@ -24,7 +24,7 @@ show_empty = false
 
 [widgets.clock]
 type = "clock"
-# %a %-d %b %-I:%M %p  →  "Mon 3 Jan 2:30 PM" — matches zebar's "EEE d MMM t".
+# %a %-d %b %-I:%M %p  →  "Mon 3 Jan 2:30 PM"
 format = "%a %-d %b %-I:%M %p"
 tick_seconds = 1
 

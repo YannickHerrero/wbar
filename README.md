@@ -2,7 +2,7 @@
 
 A minimalist status bar for Windows, designed to pair with [GlazeWM](https://github.com/glzr-io/glazewm).
 
-Inspired by [zebar](https://github.com/glzr-io/zebar) but without the webview / React build pipeline — just a single TOML config file, a handful of built-in widgets, and five named themes out of the box.
+Single binary, no webview, no build pipeline — just one TOML config file, a handful of built-in widgets, and five named themes out of the box.
 
 ```
                                                                             
