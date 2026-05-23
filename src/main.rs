@@ -2,10 +2,11 @@ mod appbar;
 // Several Palette fields and Tokens are consumed by widgets in later commits.
 #[allow(dead_code)]
 mod theme;
-// Widget-specific config variants are consumed by widget modules in later commits.
+// Some widget-specific config fields are read by widgets in later commits.
 #[allow(dead_code)]
 mod config;
 mod hotreload;
+mod widgets;
 
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
@@ -13,6 +14,7 @@ use tracing_subscriber::EnvFilter;
 use crate::appbar::{AppBar, Edge};
 use crate::config::Config;
 use crate::hotreload::HotReload;
+use crate::widgets::Widgets;
 
 const BAR_HEIGHT: f32 = 32.0;
 
@@ -72,6 +74,7 @@ fn main() -> eframe::Result {
 
 struct WbarApp {
     cfg: Config,
+    widgets: Widgets,
     pinned: bool,
     hot: Option<HotReload>,
     appbar: Option<AppBar>,
@@ -79,8 +82,10 @@ struct WbarApp {
 
 impl WbarApp {
     fn new(cfg: Config, hot: Option<HotReload>) -> Self {
+        let widgets = Widgets::from_config(&cfg);
         Self {
             cfg,
+            widgets,
             pinned: false,
             hot,
             appbar: None,
@@ -111,6 +116,7 @@ impl WbarApp {
         if let Some(cfg) = latest {
             let palette = cfg.effective_palette();
             theme::apply(ctx, &palette, theme::is_dark(cfg.theme));
+            self.widgets = Widgets::from_config(&cfg);
             self.cfg = cfg;
         }
     }
@@ -151,7 +157,7 @@ impl eframe::App for WbarApp {
 }
 
 impl WbarApp {
-    fn draw_regions(&self, ui: &mut egui::Ui) {
+    fn draw_regions(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let third = ui.available_width() / 3.0;
 
@@ -159,8 +165,8 @@ impl WbarApp {
                 egui::vec2(third, BAR_HEIGHT),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    for id in &self.cfg.layout.left {
-                        ui.label(id);
+                    for id in self.cfg.layout.left.clone() {
+                        self.widgets.render(ui, &id);
                     }
                 },
             );
@@ -169,8 +175,8 @@ impl WbarApp {
                 egui::vec2(third, BAR_HEIGHT),
                 egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                 |ui| {
-                    for id in &self.cfg.layout.center {
-                        ui.label(id);
+                    for id in self.cfg.layout.center.clone() {
+                        self.widgets.render(ui, &id);
                     }
                 },
             );
@@ -179,8 +185,8 @@ impl WbarApp {
                 egui::vec2(third, BAR_HEIGHT),
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
-                    for id in &self.cfg.layout.right {
-                        ui.label(id);
+                    for id in self.cfg.layout.right.clone() {
+                        self.widgets.render(ui, &id);
                     }
                 },
             );
