@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, Frame, RichText, Stroke};
+use eframe::egui::{self, Color32, FontId, Sense, vec2};
 
 use super::Widget;
 use crate::config::WorkspacesConfig;
@@ -9,6 +9,13 @@ use crate::theme::Palette;
 /// pill itself doesn't push against the top and bottom of the bar. Matches
 /// zebar's `.workspace { font-size: 10px }` styling.
 const WORKSPACE_FONT_SIZE: f32 = 10.0;
+/// Fixed pill height. Picked so a 28px bar leaves ~5px of breathing room
+/// above and below — relying on Frame's auto-sizing was unreliable (egui's
+/// label minimum height and content_ui sizing both bullied the pill back
+/// up to the bar height regardless of font size).
+const WORKSPACE_PILL_HEIGHT: f32 = 18.0;
+/// Horizontal padding inside the pill, each side.
+const WORKSPACE_PILL_PAD_X: f32 = 6.0;
 
 pub struct WorkspacesWidget {
     cfg: WorkspacesConfig,
@@ -50,35 +57,33 @@ impl Widget for WorkspacesWidget {
         }
 
         ui.spacing_mut().item_spacing.x = 4.0;
+        let font_id = FontId::monospace(WORKSPACE_FONT_SIZE);
+        let radius = self.radius;
         for ws in &state.workspaces {
-            // show_empty toggles a future "include workspaces with no windows"
-            // refinement once the JSON exposes that signal; for now every
-            // workspace is rendered.
+            // show_empty toggles a future "include workspaces with no
+            // windows" refinement once the JSON exposes that signal; for
+            // now every workspace is rendered.
             let (bg, fg) = if ws.focused {
                 (self.focused_bg, self.focused_fg)
             } else {
                 (self.inactive_bg, self.inactive_fg)
             };
-            // Smaller pill font + a touch of vertical inner padding keeps
-            // the pill comfortably inside the 28px bar with visible
-            // breathing room above and below, without changing
-            // bar.height. Critically, we also drop interact_size.y to 0
-            // inside the pill — otherwise egui pads any label to the
-            // interactable-widget minimum (≈20px), which made the pill
-            // fill the bar regardless of the font size.
-            Frame::new()
-                .fill(bg)
-                .stroke(Stroke::NONE)
-                .corner_radius(self.radius)
-                .inner_margin(egui::Margin::symmetric(8, 2))
-                .show(ui, |ui| {
-                    ui.spacing_mut().interact_size.y = 0.0;
-                    ui.label(
-                        RichText::new(&ws.display_name)
-                            .size(WORKSPACE_FONT_SIZE)
-                            .color(fg),
-                    );
-                });
+
+            // Lay out the text first so we know the natural width.
+            let galley = ui
+                .painter()
+                .layout_no_wrap(ws.display_name.clone(), font_id.clone(), fg);
+            let pill_w = galley.size().x + 2.0 * WORKSPACE_PILL_PAD_X;
+            let pill_size = vec2(pill_w, WORKSPACE_PILL_HEIGHT);
+
+            // allocate_exact_size + cross_align=Center on the parent
+            // gives us a fixed-size rect centred vertically inside the
+            // bar. Direct painting (rect_filled + galley) sidesteps
+            // egui's label minimum-height padding entirely.
+            let (rect, _resp) = ui.allocate_exact_size(pill_size, Sense::hover());
+            ui.painter().rect_filled(rect, radius, bg);
+            let text_pos = rect.center() - galley.size() / 2.0;
+            ui.painter().galley(text_pos, galley, fg);
         }
         // show_empty consumed so the field doesn't trip dead_code analysis
         // until we wire it to a richer JSON shape.
