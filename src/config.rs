@@ -234,6 +234,18 @@ pub struct SysinfoConfig {
     pub interval_seconds: u64,
     #[serde(default)]
     pub interface: Option<String>,
+    /// Optional glyph (typically a Nerd-Font icon) rendered immediately before
+    /// the formatted value.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// When the sampled `value` exceeds this threshold, the rendered label
+    /// uses `warn_color`. Useful for "CPU red when > 85%". Set to `None` to
+    /// disable.
+    #[serde(default)]
+    pub warn_above: Option<f64>,
+    /// Override the warn-tint colour. Falls back to `palette.error` if unset.
+    #[serde(default)]
+    pub warn_color: Option<HexColor>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
