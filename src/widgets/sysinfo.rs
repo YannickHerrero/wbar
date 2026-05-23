@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Networks, RefreshKind, System};
 
 use super::Widget;
 use crate::config::{SysinfoConfig, SysinfoMetric};
@@ -14,6 +14,7 @@ const BYTES_PER_GB: f64 = 1024.0 * 1024.0 * 1024.0;
 pub struct SysinfoWidget {
     cfg: SysinfoConfig,
     system: System,
+    networks: Option<Networks>,
     last_sample: Option<Instant>,
     rendered: String,
 }
@@ -25,12 +26,14 @@ impl SysinfoWidget {
             SysinfoMetric::Ram => {
                 RefreshKind::nothing().with_memory(MemoryRefreshKind::everything())
             }
-            // Network is added in the next commit.
             SysinfoMetric::Network => RefreshKind::nothing(),
         };
+        let networks =
+            matches!(cfg.metric, SysinfoMetric::Network).then(Networks::new_with_refreshed_list);
         Self {
             cfg,
             system: System::new_with_specifics(refresh),
+            networks,
             last_sample: None,
             rendered: String::new(),
         }
@@ -48,6 +51,10 @@ impl SysinfoWidget {
         if !due {
             return;
         }
+        let elapsed_secs = self
+            .last_sample
+            .map(|t| t.elapsed().as_secs_f64().max(0.001))
+            .unwrap_or(self.cfg.interval_seconds.max(1) as f64);
         self.last_sample = Some(Instant::now());
 
         let vars = match self.cfg.metric {
@@ -76,7 +83,42 @@ impl SysinfoWidget {
                 );
                 Some(m)
             }
-            SysinfoMetric::Network => None,
+            SysinfoMetric::Network => {
+                let Some(networks) = self.networks.as_mut() else {
+                    return;
+                };
+                networks.refresh(false);
+
+                let mut rx: u64 = 0;
+                let mut tx: u64 = 0;
+                let match_all =
+                    matches!(self.cfg.interface.as_deref(), None | Some("*") | Some(""));
+                for (name, data) in networks.iter() {
+                    let keep = match_all
+                        || self
+                            .cfg
+                            .interface
+                            .as_deref()
+                            .map(|i| i == name)
+                            .unwrap_or(false);
+                    if !keep {
+                        continue;
+                    }
+                    rx += data.received();
+                    tx += data.transmitted();
+                }
+
+                let rx_bps = rx as f64 / elapsed_secs;
+                let tx_bps = tx as f64 / elapsed_secs;
+                let mut m = HashMap::new();
+                m.insert("rx_bps".into(), rx_bps);
+                m.insert("tx_bps".into(), tx_bps);
+                m.insert("rx_kbps".into(), rx_bps / 1024.0);
+                m.insert("tx_kbps".into(), tx_bps / 1024.0);
+                m.insert("rx_mbps".into(), rx_bps / (1024.0 * 1024.0));
+                m.insert("tx_mbps".into(), tx_bps / (1024.0 * 1024.0));
+                Some(m)
+            }
         };
 
         if let Some(vars) = vars {
