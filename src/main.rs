@@ -1,3 +1,6 @@
+#[allow(dead_code)] // wired up in the next commit
+mod theme;
+
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
