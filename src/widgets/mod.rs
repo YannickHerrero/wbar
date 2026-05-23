@@ -58,7 +58,7 @@ fn build(
 ) -> Box<dyn Widget> {
     match cfg {
         WidgetConfig::Clock(c) => Box::new(clock::ClockWidget::new(c.clone())),
-        WidgetConfig::Sysinfo(c) => Box::new(sysinfo::SysinfoWidget::new(c.clone())),
+        WidgetConfig::Sysinfo(c) => Box::new(sysinfo::SysinfoWidget::new(c.clone(), palette)),
         WidgetConfig::Command(c) => Box::new(command::CommandWidget::new(c.clone())),
         WidgetConfig::Glazewm(c) => Box::new(workspaces::WorkspacesWidget::new(
             c.clone(),

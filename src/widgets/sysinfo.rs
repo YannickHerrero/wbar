@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use eframe::egui;
+use eframe::egui::{self, Color32};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Networks, RefreshKind, System};
 
 use super::Widget;
 use crate::config::{SysinfoConfig, SysinfoMetric};
+use crate::theme::Palette;
 
 const BYTES_PER_GB: f64 = 1024.0 * 1024.0 * 1024.0;
 
@@ -17,27 +18,35 @@ pub struct SysinfoWidget {
     networks: Option<Networks>,
     last_sample: Option<Instant>,
     rendered: String,
+    /// Most recent `value` extracted from the sample. Compared against
+    /// `cfg.warn_above` to decide whether to apply the warn tint.
+    current_value: Option<f64>,
+    /// Resolved warn colour: explicit `cfg.warn_color` if set, otherwise
+    /// `palette.error`. Stored to avoid re-resolving on every frame.
+    warn_color: Color32,
 }
 
 impl SysinfoWidget {
-    pub fn new(cfg: SysinfoConfig) -> Self {
+    pub fn new(cfg: SysinfoConfig, palette: &Palette) -> Self {
         let refresh = match cfg.metric {
             SysinfoMetric::Cpu => RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),
             SysinfoMetric::Ram => {
                 RefreshKind::nothing().with_memory(MemoryRefreshKind::everything())
             }
             SysinfoMetric::Network => RefreshKind::nothing(),
-            // Battery is handled directly via Win32 in the next commit.
             SysinfoMetric::Battery => RefreshKind::nothing(),
         };
         let networks =
             matches!(cfg.metric, SysinfoMetric::Network).then(Networks::new_with_refreshed_list);
+        let warn_color = cfg.warn_color.map(|c| c.0).unwrap_or(palette.error);
         Self {
             cfg,
             system: System::new_with_specifics(refresh),
             networks,
             last_sample: None,
             rendered: String::new(),
+            current_value: None,
+            warn_color,
         }
     }
 
@@ -130,7 +139,15 @@ impl SysinfoWidget {
         };
 
         if let Some(vars) = vars {
+            self.current_value = vars.get("value").copied();
             self.rendered = format_with(&self.cfg.format, &vars);
+        }
+    }
+
+    fn should_warn(&self) -> bool {
+        match (self.cfg.warn_above, self.current_value) {
+            (Some(threshold), Some(value)) => value > threshold,
+            _ => false,
         }
     }
 }
@@ -138,7 +155,20 @@ impl SysinfoWidget {
 impl Widget for SysinfoWidget {
     fn render(&mut self, ui: &mut egui::Ui) {
         self.refresh_if_due();
-        ui.label(&self.rendered);
+
+        // Match zebar's spacing: a small gap between the icon and the value.
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.horizontal(|ui| {
+            if let Some(icon) = &self.cfg.icon {
+                ui.label(icon);
+            }
+            if self.should_warn() {
+                ui.colored_label(self.warn_color, &self.rendered);
+            } else {
+                ui.label(&self.rendered);
+            }
+        });
+
         ui.ctx().request_repaint_after(self.interval());
     }
 }
