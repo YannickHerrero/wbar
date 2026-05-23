@@ -25,8 +25,14 @@ use crate::hotreload::HotReload;
 use crate::tray::Tray;
 use crate::widgets::Widgets;
 
-/// Horizontal padding between the bar contents and the screen edges.
-const BAR_EDGE_PAD: f32 = 16.0;
+/// Horizontal padding between the bar contents and the screen edges,
+/// applied as the CentralPanel frame's inner margin.
+const BAR_EDGE_PAD: i8 = 16;
+/// Extra cushion inside the right region so Nerd-Font glyphs with positive
+/// right-side bearing don't paint past the slot edge.
+const RIGHT_EDGE_CUSHION: f32 = 8.0;
+/// Gap between consecutive widgets within the left and right regions.
+const REGION_ITEM_SPACING: f32 = 14.0;
 
 fn main() -> eframe::Result {
     tracing_subscriber::fmt()
@@ -226,7 +232,7 @@ impl eframe::App for WbarApp {
         let bg = ctx.style().visuals.panel_fill;
         let frame_style = egui::Frame::new()
             .fill(bg)
-            .inner_margin(egui::Margin::symmetric(BAR_EDGE_PAD as i8, 0));
+            .inner_margin(egui::Margin::symmetric(BAR_EDGE_PAD, 0));
         egui::CentralPanel::default()
             .frame(frame_style)
             .show(ctx, |ui| {
@@ -262,6 +268,7 @@ impl WbarApp {
                     // so an empty left slot collapses to zero and the centre
                     // clock slides into the left third.
                     ui.set_min_size(slot);
+                    ui.spacing_mut().item_spacing.x = REGION_ITEM_SPACING;
                     for id in self.cfg.layout.left.clone() {
                         self.widgets.render(ui, &id);
                     }
@@ -288,6 +295,12 @@ impl WbarApp {
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
                     ui.set_min_size(slot);
+                    ui.spacing_mut().item_spacing.x = REGION_ITEM_SPACING;
+                    // In a right_to_left layout, add_space is consumed at the
+                    // right edge first. This nudges the first widget inward
+                    // so glyphs with positive right-side bearing (some Nerd
+                    // Font battery icons) don't paint past the slot edge.
+                    ui.add_space(RIGHT_EDGE_CUSHION);
                     for id in self.cfg.layout.right.clone() {
                         self.widgets.render(ui, &id);
                     }
