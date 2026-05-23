@@ -1,5 +1,8 @@
+use std::fmt;
+
 use eframe::egui::{Color32, Context, Stroke, Visuals};
-use serde::Deserialize;
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Deserialize)]
 pub enum Theme {
@@ -121,9 +124,15 @@ pub fn tokens() -> Tokens {
     }
 }
 
-pub fn apply(ctx: &Context, theme: Theme) {
-    let p = palette(theme);
-    let mut v = if matches!(theme, Theme::Ink) {
+/// Whether the supplied theme uses a dark base palette. Callers building a
+/// custom palette with overrides still want the right egui base Visuals.
+pub fn is_dark(theme: Theme) -> bool {
+    matches!(theme, Theme::Ink)
+}
+
+pub fn apply(ctx: &Context, palette: &Palette, dark: bool) {
+    let p = palette;
+    let mut v = if dark {
         Visuals::dark()
     } else {
         Visuals::light()
@@ -152,4 +161,68 @@ pub fn apply(ctx: &Context, theme: Theme) {
     v.widgets.hovered.weak_bg_fill = p.muted;
 
     ctx.set_visuals(v);
+}
+
+/// `#RRGGBB` (or `#RRGGBBAA`) hex string that deserialises into a `Color32`.
+/// Failing parses surface a useful TOML error instead of silently falling
+/// back to a default colour.
+#[derive(Debug, Clone, Copy)]
+pub struct HexColor(pub Color32);
+
+impl<'de> Deserialize<'de> for HexColor {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl Visitor<'_> for V {
+            type Value = HexColor;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a hex colour string like \"#RRGGBB\" or \"#RRGGBBAA\"")
+            }
+            fn visit_str<E: de::Error>(self, s: &str) -> Result<HexColor, E> {
+                parse_hex(s).map(HexColor).map_err(de::Error::custom)
+            }
+        }
+        d.deserialize_str(V)
+    }
+}
+
+fn parse_hex(s: &str) -> Result<Color32, String> {
+    let trimmed = s.strip_prefix('#').unwrap_or(s);
+    let bytes = match trimmed.len() {
+        6 | 8 => trimmed,
+        _ => return Err(format!("expected 6 or 8 hex digits, got {:?}", s)),
+    };
+    let parse = |i: usize| -> Result<u8, String> {
+        u8::from_str_radix(&bytes[i..i + 2], 16)
+            .map_err(|e| format!("invalid hex byte at offset {}: {}", i, e))
+    };
+    let r = parse(0)?;
+    let g = parse(2)?;
+    let b = parse(4)?;
+    let a = if bytes.len() == 8 { parse(6)? } else { 255 };
+    Ok(Color32::from_rgba_unmultiplied(r, g, b, a))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_rrggbb() {
+        let c = parse_hex("#1e1e2e").expect("valid");
+        assert_eq!(c.r(), 0x1e);
+        assert_eq!(c.g(), 0x1e);
+        assert_eq!(c.b(), 0x2e);
+        assert_eq!(c.a(), 0xff);
+    }
+
+    #[test]
+    fn parses_rrggbbaa() {
+        let c = parse_hex("F4EBD980").expect("valid");
+        assert_eq!(c.a(), 0x80);
+    }
+
+    #[test]
+    fn rejects_short_string() {
+        assert!(parse_hex("#abc").is_err());
+    }
 }

@@ -50,7 +50,8 @@ fn main() -> eframe::Result {
         "wbar",
         options,
         Box::new(move |cc| {
-            theme::apply(&cc.egui_ctx, cfg.theme);
+            let palette = cfg.effective_palette();
+            theme::apply(&cc.egui_ctx, &palette, theme::is_dark(cfg.theme));
             Ok(Box::new(WbarApp::new(cfg)))
         }),
     )
