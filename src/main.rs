@@ -266,7 +266,7 @@ impl WbarApp {
                 IpcCommand::Show => self.visible = true,
                 IpcCommand::Hide => self.visible = false,
                 IpcCommand::Quit => quit_requested = true,
-                IpcCommand::SetTheme(theme) => self.apply_theme(ctx, theme),
+                IpcCommand::SetTheme(theme) => self.apply_theme_persistent(ctx, theme),
             }
         }
 
