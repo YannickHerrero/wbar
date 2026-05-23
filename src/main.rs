@@ -188,9 +188,20 @@ impl eframe::App for WbarApp {
         self.drain_reloads(ctx);
         self.pin_to_edge(ctx);
         self.register_appbar(frame);
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.draw_regions(ui);
-        });
+
+        // CentralPanel defaults to a Frame with ~8px margins on every side,
+        // which would eat most of a 28px bar and leave too little vertical
+        // room for text to centre. Replace it with a zero-margin frame so
+        // widgets get the full bar height to lay out in.
+        let bg = ctx.style().visuals.panel_fill;
+        let frame_style = egui::Frame::new()
+            .fill(bg)
+            .inner_margin(egui::Margin::symmetric(8, 0));
+        egui::CentralPanel::default()
+            .frame(frame_style)
+            .show(ctx, |ui| {
+                self.draw_regions(ui);
+            });
     }
 }
 
@@ -202,11 +213,16 @@ impl WbarApp {
 
 impl WbarApp {
     fn draw_regions(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        // horizontal_centered (vs plain horizontal) makes the outer row fill
+        // the panel's height and lays out children with cross-axis = Center,
+        // so labels sit on the bar's vertical midline instead of the top.
+        ui.horizontal_centered(|ui| {
+            let bar_h = self.bar_height();
             let third = ui.available_width() / 3.0;
+            let slot = egui::vec2(third, bar_h);
 
             ui.allocate_ui_with_layout(
-                egui::vec2(third, self.bar_height()),
+                slot,
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     for id in self.cfg.layout.left.clone() {
@@ -216,17 +232,19 @@ impl WbarApp {
             );
 
             ui.allocate_ui_with_layout(
-                egui::vec2(third, self.bar_height()),
+                slot,
                 egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                 |ui| {
-                    for id in self.cfg.layout.center.clone() {
-                        self.widgets.render(ui, &id);
-                    }
+                    ui.horizontal_centered(|ui| {
+                        for id in self.cfg.layout.center.clone() {
+                            self.widgets.render(ui, &id);
+                        }
+                    });
                 },
             );
 
             ui.allocate_ui_with_layout(
-                egui::vec2(third, self.bar_height()),
+                slot,
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
                     for id in self.cfg.layout.right.clone() {
