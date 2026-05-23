@@ -12,6 +12,8 @@ pub use imp::{Tray, TrayEvent, build, poll};
 #[cfg(not(windows))]
 pub use stub::{Tray, TrayEvent, build, poll};
 
+use crate::theme::Theme;
+
 /// What the tray menu emits this frame. Mapped onto IPC commands by the
 /// caller so tray clicks and `wbar toggle`-style invocations share a
 /// single code path.
@@ -21,46 +23,59 @@ pub use stub::{Tray, TrayEvent, build, poll};
 #[allow(dead_code)]
 pub enum TrayEventKind {
     Toggle,
-    Show,
-    Hide,
     Quit,
+    SetTheme(Theme),
 }
 
 #[cfg(windows)]
 mod imp {
+    use std::collections::BTreeMap;
+
     use anyhow::Result;
     use eframe::egui;
-    use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem};
+    use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
+    use crate::theme::Theme;
+
     pub use super::TrayEventKind as TrayEvent;
+
+    /// Themes shown in the tray submenu, in display order.
+    const THEMES: &[(Theme, &str)] = &[
+        (Theme::Paper, "Paper"),
+        (Theme::Stone, "Stone"),
+        (Theme::Sage, "Sage"),
+        (Theme::Clay, "Clay"),
+        (Theme::Ink, "Ink"),
+    ];
 
     pub struct Tray {
         // Dropping the TrayIcon removes it from the notification area; keep
         // it alive for the process lifetime.
         _inner: TrayIcon,
         toggle_id: MenuId,
-        show_id: MenuId,
-        hide_id: MenuId,
         quit_id: MenuId,
+        theme_ids: BTreeMap<MenuId, Theme>,
     }
 
     pub fn build(ctx: egui::Context) -> Result<Tray> {
         let menu = Menu::new();
         let toggle = MenuItem::new("Toggle bar", true, None);
-        let show = MenuItem::new("Show bar", true, None);
-        let hide = MenuItem::new("Hide bar", true, None);
+        let theme_submenu = Submenu::new("Theme", true);
         let quit = MenuItem::new("Quit wbar", true, None);
 
         let toggle_id = toggle.id().clone();
-        let show_id = show.id().clone();
-        let hide_id = hide.id().clone();
         let quit_id = quit.id().clone();
+        let mut theme_ids = BTreeMap::new();
+        for (theme, label) in THEMES {
+            let item = MenuItem::new(*label, true, None);
+            theme_ids.insert(item.id().clone(), *theme);
+            theme_submenu.append(&item)?;
+        }
 
         menu.append(&toggle)?;
-        menu.append(&show)?;
-        menu.append(&hide)?;
-        menu.append(&tray_icon::menu::PredefinedMenuItem::separator())?;
+        menu.append(&theme_submenu)?;
+        menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&quit)?;
 
         let icon = Icon::from_rgba(generate_icon_rgba(32), 32, 32)?;
@@ -73,7 +88,7 @@ mod imp {
 
         // Without this handler, MenuEvents land in the global channel but
         // nothing wakes the eframe event loop while the bar window is
-        // hidden — so Show / Quit clicks would do nothing once the bar is
+        // hidden — so Quit clicks would do nothing once the bar is
         // hidden. request_repaint() forces an update tick which then drains
         // the channel via tray::poll.
         MenuEvent::set_event_handler(Some(move |_event| {
@@ -84,9 +99,8 @@ mod imp {
         Ok(Tray {
             _inner: inner,
             toggle_id,
-            show_id,
-            hide_id,
             quit_id,
+            theme_ids,
         })
     }
 
@@ -97,12 +111,10 @@ mod imp {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             latest = if event.id == tray.toggle_id {
                 Some(TrayEvent::Toggle)
-            } else if event.id == tray.show_id {
-                Some(TrayEvent::Show)
-            } else if event.id == tray.hide_id {
-                Some(TrayEvent::Hide)
             } else if event.id == tray.quit_id {
                 Some(TrayEvent::Quit)
+            } else if let Some(theme) = tray.theme_ids.get(&event.id) {
+                Some(TrayEvent::SetTheme(*theme))
             } else {
                 latest
             };

@@ -27,6 +27,8 @@ use crate::glazewm::GlazewmClient;
 use crate::hotreload::HotReload;
 use crate::ipc::IpcCommand;
 use crate::theme::Theme;
+use std::path::PathBuf;
+
 use crate::tray::{Tray, TrayEvent};
 use crate::widgets::Widgets;
 
@@ -89,13 +91,16 @@ fn main() -> eframe::Result {
             theme::apply(&cc.egui_ctx, &palette, theme::is_dark(cfg.theme));
             theme::apply_font_size(&cc.egui_ctx, cfg.font.size);
 
-            let hot = config_path.and_then(|p| match hotreload::spawn(p, cc.egui_ctx.clone()) {
-                Ok(h) => Some(h),
-                Err(err) => {
-                    tracing::warn!(error = ?err, "hot reload disabled");
-                    None
-                }
-            });
+            let hot =
+                config_path
+                    .clone()
+                    .and_then(|p| match hotreload::spawn(p, cc.egui_ctx.clone()) {
+                        Ok(h) => Some(h),
+                        Err(err) => {
+                            tracing::warn!(error = ?err, "hot reload disabled");
+                            None
+                        }
+                    });
 
             let glazewm = GlazewmClient::spawn(cc.egui_ctx.clone());
 
@@ -115,7 +120,14 @@ fn main() -> eframe::Result {
                 }
             };
 
-            Ok(Box::new(WbarApp::new(cfg, hot, glazewm, tray, ipc_rx)))
+            Ok(Box::new(WbarApp::new(
+                cfg,
+                config_path,
+                hot,
+                glazewm,
+                tray,
+                ipc_rx,
+            )))
         }),
     )
 }
@@ -182,6 +194,10 @@ fn print_usage(prog: &str) {
 
 struct WbarApp {
     cfg: Config,
+    /// Path where Config::save writes. Tray theme switcher and IPC
+    /// set-theme persist through this. None when default_path() couldn't
+    /// resolve a config dir (e.g. cargo-check on Linux without HOME).
+    config_path: Option<PathBuf>,
     widgets: Widgets,
     glazewm: GlazewmClient,
     pinned: bool,
@@ -195,6 +211,7 @@ struct WbarApp {
 impl WbarApp {
     fn new(
         cfg: Config,
+        config_path: Option<PathBuf>,
         hot: Option<HotReload>,
         glazewm: GlazewmClient,
         tray: Option<Tray>,
@@ -205,6 +222,7 @@ impl WbarApp {
         let widgets = Widgets::from_config(&cfg, &palette, radius, &glazewm);
         Self {
             cfg,
+            config_path,
             widgets,
             glazewm,
             pinned: false,
@@ -228,9 +246,8 @@ impl WbarApp {
         {
             match event {
                 TrayEvent::Toggle => self.visible = !self.visible,
-                TrayEvent::Show => self.visible = true,
-                TrayEvent::Hide => self.visible = false,
                 TrayEvent::Quit => quit_requested = true,
+                TrayEvent::SetTheme(theme) => self.apply_theme_persistent(ctx, theme),
             }
         }
 
@@ -274,12 +291,25 @@ impl WbarApp {
     }
 
     fn apply_theme(&mut self, ctx: &egui::Context, theme: Theme) {
-        tracing::info!(?theme, "switching theme via ipc");
+        tracing::info!(?theme, "switching theme");
         self.cfg.theme = theme;
         let palette = self.cfg.effective_palette();
         let radius = self.cfg.effective_tokens().radius_sm;
         theme::apply(ctx, &palette, theme::is_dark(theme));
         self.widgets = Widgets::from_config(&self.cfg, &palette, radius, &self.glazewm);
+    }
+
+    /// Apply a theme and persist the choice to disk so it survives a
+    /// restart. Used by the tray theme submenu (and the IPC set-theme
+    /// handler in the next commit). Save errors are warn-logged but don't
+    /// block the in-memory apply.
+    fn apply_theme_persistent(&mut self, ctx: &egui::Context, theme: Theme) {
+        self.apply_theme(ctx, theme);
+        if let Some(path) = &self.config_path
+            && let Err(err) = self.cfg.save(path)
+        {
+            tracing::warn!(error = ?err, "saving config after theme change");
+        }
     }
 
     fn edge(&self) -> Edge {
