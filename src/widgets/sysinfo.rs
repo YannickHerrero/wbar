@@ -121,9 +121,12 @@ impl SysinfoWidget {
                 m.insert("tx_mbps".into(), tx_bps / (1024.0 * 1024.0));
                 Some(m)
             }
-            // Real query lands in the next commit; for now the widget stays
-            // empty rather than rendering stale text.
-            SysinfoMetric::Battery => None,
+            SysinfoMetric::Battery => read_battery().map(|b| {
+                let mut m = HashMap::new();
+                m.insert("value".into(), b.percent);
+                m.insert("charging".into(), if b.charging { 1.0 } else { 0.0 });
+                m
+            }),
         };
 
         if let Some(vars) = vars {
@@ -158,4 +161,37 @@ pub(super) fn format_with(template: &str, vars: &HashMap<String, f64>) -> String
             template.to_string()
         }
     }
+}
+
+struct Battery {
+    percent: f64,
+    charging: bool,
+}
+
+#[cfg(windows)]
+fn read_battery() -> Option<Battery> {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+
+    let mut status = SYSTEM_POWER_STATUS::default();
+    // SAFETY: GetSystemPowerStatus writes into the pointer we pass; it does
+    // not retain it after returning.
+    let ok = unsafe { GetSystemPowerStatus(&mut status) };
+    if ok.is_err() {
+        return None;
+    }
+    // BatteryLifePercent == 255 means "unknown"; BatteryFlag bit 7 (0x80)
+    // means "no system battery present" — both should hide the widget.
+    if status.BatteryLifePercent == 255 || status.BatteryFlag & 0x80 != 0 {
+        return None;
+    }
+    Some(Battery {
+        percent: f64::from(status.BatteryLifePercent),
+        // ACLineStatus: 0 = offline, 1 = online, 255 = unknown.
+        charging: status.ACLineStatus == 1,
+    })
+}
+
+#[cfg(not(windows))]
+fn read_battery() -> Option<Battery> {
+    None
 }
