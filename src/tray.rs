@@ -38,6 +38,7 @@ mod imp {
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
     use crate::theme::Theme;
+    use crate::wake::Waker;
 
     pub use super::TrayEventKind as TrayEvent;
 
@@ -64,7 +65,7 @@ mod imp {
         rx: Receiver<MenuEvent>,
     }
 
-    pub fn build(ctx: egui::Context) -> Result<Tray> {
+    pub fn build(ctx: egui::Context, waker: Waker) -> Result<Tray> {
         let menu = Menu::new();
         let toggle = MenuItem::new("Toggle bar", true, None);
         let theme_submenu = Submenu::new("Theme", true);
@@ -94,13 +95,18 @@ mod imp {
 
         // muda's MenuEvent::send is either/or: setting a handler suppresses
         // delivery to MenuEvent::receiver(). So we forward events into our
-        // own channel from inside the handler — that way the handler still
-        // wakes the egui loop and tray::poll still sees every click.
+        // own channel from inside the handler. ctx.request_repaint() *and*
+        // waker.wake() — the former sets egui's pending-repaint flag, the
+        // latter calls InvalidateRect on the bar HWND so winit's pump
+        // actually wakes up to see the flag. Without the wake(), eframe
+        // 0.32 on Windows leaves the loop asleep when the only signal is
+        // a background-thread request_repaint.
         let (tx, rx) = mpsc::channel::<MenuEvent>();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             tracing::info!(id = ?event.id, "tray handler fired");
             let _ = tx.send(event);
             ctx.request_repaint();
+            waker.wake();
         }));
 
         tracing::info!("tray icon ready (right-click for menu)");
@@ -170,11 +176,13 @@ mod stub {
     use anyhow::Result;
     use eframe::egui;
 
+    use crate::wake::Waker;
+
     pub use super::TrayEventKind as TrayEvent;
 
     pub struct Tray;
 
-    pub fn build(_ctx: egui::Context) -> Result<Tray> {
+    pub fn build(_ctx: egui::Context, _waker: Waker) -> Result<Tray> {
         anyhow::bail!("tray icon is only implemented on Windows")
     }
 

@@ -6,6 +6,7 @@ use eframe::egui;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::config::{self, Config};
+use crate::wake::Waker;
 
 /// Watches a config file (via its parent directory, which is robust to atomic
 /// rename-saves common in editors) and pushes a freshly parsed Config onto the
@@ -17,7 +18,7 @@ pub struct HotReload {
     _watcher: RecommendedWatcher,
 }
 
-pub fn spawn(path: PathBuf, ctx: egui::Context) -> Result<HotReload> {
+pub fn spawn(path: PathBuf, ctx: egui::Context, waker: Waker) -> Result<HotReload> {
     let (tx, rx) = mpsc::channel::<Config>();
     let watch_path = path.clone();
 
@@ -46,6 +47,7 @@ pub fn spawn(path: PathBuf, ctx: egui::Context) -> Result<HotReload> {
                 tracing::info!(path = %watch_path.display(), "config reloaded");
                 if tx.send(cfg).is_ok() {
                     ctx.request_repaint();
+                    waker.wake();
                 }
             }
             Err(err) => tracing::warn!(error = ?err, "config reload failed"),

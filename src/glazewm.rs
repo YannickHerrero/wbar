@@ -19,6 +19,8 @@ use tungstenite::Message;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::stream::MaybeTlsStream;
 
+use crate::wake::Waker;
+
 const GLAZEWM_WS_URL: &str = "ws://127.0.0.1:6123";
 
 const SUBSCRIBE_CMD: &str = concat!(
@@ -51,12 +53,12 @@ pub struct GlazewmClient {
 }
 
 impl GlazewmClient {
-    pub fn spawn(ctx: egui::Context) -> Self {
+    pub fn spawn(ctx: egui::Context, waker: Waker) -> Self {
         let state = Arc::new(RwLock::new(WorkspaceState::default()));
         let inner = state.clone();
         thread::Builder::new()
             .name("glazewm-ipc".into())
-            .spawn(move || run(ctx, inner))
+            .spawn(move || run(ctx, waker, inner))
             .expect("spawning glazewm IPC thread");
         Self { state }
     }
@@ -74,16 +76,13 @@ const BACKOFF_MAX: Duration = Duration::from_secs(10);
 /// backoff. Otherwise glazewm crash-looping would peg us at the minimum delay.
 const BACKOFF_RESET_AFTER: Duration = Duration::from_secs(5);
 
-fn run(ctx: egui::Context, state: Arc<RwLock<WorkspaceState>>) {
+fn run(ctx: egui::Context, waker: Waker, state: Arc<RwLock<WorkspaceState>>) {
     let mut backoff = BACKOFF_MIN;
-    // Track whether we've ever successfully connected, so the log path can
-    // distinguish "glazewm just disappeared" (worth a warn) from "glazewm
-    // isn't running and probably won't be" (worth one info, then silence).
     let mut ever_connected = false;
     let mut unreachable_logged = false;
     loop {
         let connected_at = Instant::now();
-        let result = session(&ctx, &state);
+        let result = session(&ctx, &waker, &state);
         let stayed_up_for = connected_at.elapsed();
         let connected_this_round = stayed_up_for >= Duration::from_millis(50)
             && state.read().map(|s| s.connected).unwrap_or(false);
@@ -95,13 +94,10 @@ fn run(ctx: egui::Context, state: Arc<RwLock<WorkspaceState>>) {
                 unreachable_logged = false;
             }
             Err(err) if ever_connected => {
-                // We had a working session and lost it — that's worth a warn.
                 tracing::warn!(error = ?err, "glazewm session dropped");
                 unreachable_logged = false;
             }
             Err(err) if !unreachable_logged => {
-                // First time we couldn't reach glazewm. One quiet log, then
-                // we go silent so this isn't spam when glazewm isn't running.
                 tracing::info!(
                     error = %err,
                     "glazewm not reachable; the workspaces widget will stay disabled until it appears",
@@ -120,6 +116,7 @@ fn run(ctx: egui::Context, state: Arc<RwLock<WorkspaceState>>) {
 
         set_connected(&state, false);
         ctx.request_repaint();
+        waker.wake();
 
         if stayed_up_for >= BACKOFF_RESET_AFTER {
             backoff = BACKOFF_MIN;
@@ -130,7 +127,7 @@ fn run(ctx: egui::Context, state: Arc<RwLock<WorkspaceState>>) {
     }
 }
 
-fn session(ctx: &egui::Context, state: &Arc<RwLock<WorkspaceState>>) -> Result<()> {
+fn session(ctx: &egui::Context, waker: &Waker, state: &Arc<RwLock<WorkspaceState>>) -> Result<()> {
     let request = GLAZEWM_WS_URL
         .into_client_request()
         .context("building ws client request")?;
@@ -139,13 +136,14 @@ fn session(ctx: &egui::Context, state: &Arc<RwLock<WorkspaceState>>) -> Result<(
     tracing::info!(url = GLAZEWM_WS_URL, "glazewm connected");
     set_connected(state, true);
     ctx.request_repaint();
+    waker.wake();
 
     socket.send(Message::text(SUBSCRIBE_CMD))?;
     socket.send(Message::text(QUERY_WORKSPACES_CMD))?;
 
     loop {
         match socket.read()? {
-            Message::Text(text) => handle_text(&text, ctx, state, &mut socket)?,
+            Message::Text(text) => handle_text(&text, ctx, waker, state, &mut socket)?,
             Message::Ping(p) => socket.send(Message::Pong(p))?,
             Message::Close(_) => {
                 tracing::info!("glazewm server closed connection");
@@ -159,6 +157,7 @@ fn session(ctx: &egui::Context, state: &Arc<RwLock<WorkspaceState>>) -> Result<(
 fn handle_text(
     text: &str,
     ctx: &egui::Context,
+    waker: &Waker,
     state: &Arc<RwLock<WorkspaceState>>,
     socket: &mut tungstenite::WebSocket<MaybeTlsStream<TcpStream>>,
 ) -> Result<()> {
@@ -175,10 +174,10 @@ fn handle_text(
             if let Some(ws_list) = extract_workspaces(&envelope.data) {
                 update_state(state, ws_list);
                 ctx.request_repaint();
+                waker.wake();
             }
         }
         Some("event_subscription") => {
-            // Any change → re-query for a fresh snapshot.
             socket.send(Message::text(QUERY_WORKSPACES_CMD))?;
         }
         _ => {}

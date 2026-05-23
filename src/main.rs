@@ -14,6 +14,7 @@ mod glazewm;
 mod hotreload;
 mod ipc;
 mod tray;
+mod wake;
 mod widgets;
 
 use eframe::egui;
@@ -32,6 +33,7 @@ use crate::theme::Theme;
 use std::path::PathBuf;
 
 use crate::tray::{Tray, TrayEvent};
+use crate::wake::Waker;
 use crate::widgets::Widgets;
 
 /// Horizontal padding between the bar contents and the screen edges,
@@ -90,12 +92,6 @@ fn main() -> eframe::Result {
             theme::apply(&cc.egui_ctx, &palette, theme::is_dark(cfg.theme));
             theme::apply_font_size(&cc.egui_ctx, cfg.font.size);
 
-            // (No keepalive thread — eframe 0.32 doesn't reliably wake on
-            // ctx.request_repaint() from background threads on Windows.
-            // appbar::register installs a Win32 SetTimer on the bar's
-            // HWND instead, which posts WM_TIMER directly into winit's
-            // message queue and gives eframe a chance to see pending
-            // repaints set by tray / IPC handlers.)
             // A status bar shouldn't expose drag-selection on its labels —
             // the cursor changes to a text caret on hover and click-drag
             // selects the value, which is noise nobody wants here.
@@ -103,20 +99,27 @@ fn main() -> eframe::Result {
                 s.interaction.selectable_labels = false;
             });
 
-            let hot =
-                config_path
-                    .clone()
-                    .and_then(|p| match hotreload::spawn(p, cc.egui_ctx.clone()) {
-                        Ok(h) => Some(h),
-                        Err(err) => {
-                            tracing::warn!(error = ?err, "hot reload disabled");
-                            None
-                        }
-                    });
+            // A shared cross-thread waker. Background subsystems (tray,
+            // IPC, glazewm, hot-reload) call waker.wake() after notifying
+            // egui so winit's pump actually runs and update() consumes
+            // the events. The HWND inside it is armed by appbar::register
+            // on the first frame; until then wake() is a no-op (no
+            // background events fire that early).
+            let waker = Waker::new();
 
-            let glazewm = GlazewmClient::spawn(cc.egui_ctx.clone());
+            let hot = config_path.clone().and_then(|p| {
+                match hotreload::spawn(p, cc.egui_ctx.clone(), waker.clone()) {
+                    Ok(h) => Some(h),
+                    Err(err) => {
+                        tracing::warn!(error = ?err, "hot reload disabled");
+                        None
+                    }
+                }
+            });
 
-            let tray = match tray::build(cc.egui_ctx.clone()) {
+            let glazewm = GlazewmClient::spawn(cc.egui_ctx.clone(), waker.clone());
+
+            let tray = match tray::build(cc.egui_ctx.clone(), waker.clone()) {
                 Ok(t) => Some(t),
                 Err(err) => {
                     tracing::warn!(error = ?err, "tray icon disabled");
@@ -124,7 +127,7 @@ fn main() -> eframe::Result {
                 }
             };
 
-            let ipc_rx = match ipc::spawn(cc.egui_ctx.clone()) {
+            let ipc_rx = match ipc::spawn(cc.egui_ctx.clone(), waker.clone()) {
                 Ok(rx) => Some(rx),
                 Err(err) => {
                     tracing::warn!(error = ?err, "ipc control server disabled");
@@ -139,6 +142,7 @@ fn main() -> eframe::Result {
                 glazewm,
                 tray,
                 ipc_rx,
+                waker,
             )))
         }),
     )
@@ -265,6 +269,9 @@ struct WbarApp {
     appbar: Option<AppBar>,
     tray: Option<Tray>,
     ipc_rx: Option<Receiver<IpcCommand>>,
+    /// Cross-thread waker passed to appbar::register so background
+    /// subsystems can wake the eframe main loop via InvalidateRect.
+    waker: Waker,
 }
 
 impl WbarApp {
@@ -275,6 +282,7 @@ impl WbarApp {
         glazewm: GlazewmClient,
         tray: Option<Tray>,
         ipc_rx: Option<Receiver<IpcCommand>>,
+        waker: Waker,
     ) -> Self {
         let palette = cfg.effective_palette();
         let radius = cfg.effective_tokens().radius_sm;
@@ -291,6 +299,7 @@ impl WbarApp {
             appbar: None,
             tray,
             ipc_rx,
+            waker,
         }
     }
 
@@ -395,13 +404,14 @@ impl WbarApp {
     /// Register the bar with the Windows shell once the window has an HWND.
     /// SetWindowPos inside register() also moves the window to the rect the
     /// shell allocated, so this takes over from `pin_to_edge` once it succeeds.
+    /// register also arms the cross-thread Waker with the HWND on success.
     fn register_appbar(&mut self, frame: &eframe::Frame) {
         if self.appbar.is_some() {
             return;
         }
         let edge = self.edge();
         let height = self.cfg.bar.height as i32;
-        self.appbar = appbar::register(frame, edge, height);
+        self.appbar = appbar::register(frame, edge, height, &self.waker);
     }
 
     /// Drain any pending config reloads from the watcher and apply the latest.

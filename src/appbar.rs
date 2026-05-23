@@ -5,6 +5,8 @@
 
 use eframe::Frame;
 
+use crate::wake::Waker;
+
 #[derive(Clone, Copy, Debug)]
 pub enum Edge {
     Top,
@@ -21,14 +23,16 @@ pub use stub::AppBar;
 
 /// Try to register an AppBar reservation along the chosen edge. Returns None
 /// if we can't extract an HWND from the eframe Frame yet (the first few
-/// frames may not have one) or if any SHAppBarMessage call fails.
-pub fn register(frame: &Frame, edge: Edge, height: i32) -> Option<AppBar> {
-    AppBar::try_register(frame, edge, height)
+/// frames may not have one) or if any SHAppBarMessage call fails. On
+/// success, also arms the Waker with the bar's HWND so background threads
+/// can wake the eframe loop via InvalidateRect.
+pub fn register(frame: &Frame, edge: Edge, height: i32, waker: &Waker) -> Option<AppBar> {
+    AppBar::try_register(frame, edge, height, waker)
 }
 
 #[cfg(windows)]
 mod imp {
-    use super::{Edge, Frame};
+    use super::{Edge, Frame, Waker};
 
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows::Win32::Foundation::{HWND, LPARAM, RECT};
@@ -37,28 +41,25 @@ mod imp {
         SHAppBarMessage,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOZORDER, SetTimer,
-        SetWindowPos,
+        GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos,
     };
-
-    /// Win32 timer id we use to keep winit's message pump waking up. Picked
-    /// arbitrarily; only this module sets a timer on the bar's HWND.
-    const WAKE_TIMER_ID: usize = 1;
-    /// 200 ms = 5 wake-ups per second. Cheap (the message pump just
-    /// processes a WM_TIMER no-op) and gives the tray a worst-case 200 ms
-    /// latency between click and apply.
-    const WAKE_TIMER_INTERVAL_MS: u32 = 200;
 
     pub struct AppBar {
         hwnd: HWND,
     }
 
     impl AppBar {
-        pub fn try_register(frame: &Frame, edge: Edge, height: i32) -> Option<Self> {
+        pub fn try_register(frame: &Frame, edge: Edge, height: i32, waker: &Waker) -> Option<Self> {
             let hwnd = hwnd_from_frame(frame)?;
             // SAFETY: SHAppBarMessage and SetWindowPos take a valid HWND owned
             // by this process. We just got it from the live eframe viewport.
-            unsafe { do_register(hwnd, edge, height) }
+            let appbar = unsafe { do_register(hwnd, edge, height) }?;
+            // Arm the cross-thread waker now that we know the HWND.
+            // Background threads (tray handler, IPC, glazewm reconnect)
+            // call waker.wake() to InvalidateRect on this HWND, which
+            // queues a WM_PAINT that winit turns into App::update.
+            waker.set_hwnd(hwnd.0 as isize);
+            Some(appbar)
         }
     }
 
@@ -154,26 +155,12 @@ mod imp {
             )
         };
 
-        // Install a periodic WM_TIMER on our HWND so winit's message pump
-        // wakes regularly. Without this, eframe 0.32 on Windows doesn't
-        // reliably respond to ctx.request_repaint() from background
-        // threads (tray handler, ipc handler, glazewm reconnect, ...), so
-        // tray clicks could sit in the channel for tens of seconds before
-        // update() finally ran. SetTimer with HWND owner posts WM_TIMER
-        // straight into the thread's message queue. Re-calling SetTimer
-        // with the same id replaces the existing timer, so it's safe to
-        // call again on AppBar re-register after a Hide→Show.
-        unsafe {
-            SetTimer(Some(hwnd), WAKE_TIMER_ID, WAKE_TIMER_INTERVAL_MS, None);
-        }
-
         tracing::info!(
             edge = ?edge,
             left = abd.rc.left,
             top = abd.rc.top,
             width = w,
             height = h,
-            wake_timer_ms = WAKE_TIMER_INTERVAL_MS,
             "appbar registered",
         );
 
@@ -183,12 +170,17 @@ mod imp {
 
 #[cfg(not(windows))]
 mod stub {
-    use super::{Edge, Frame};
+    use super::{Edge, Frame, Waker};
 
     pub struct AppBar;
 
     impl AppBar {
-        pub fn try_register(_frame: &Frame, _edge: Edge, _height: i32) -> Option<Self> {
+        pub fn try_register(
+            _frame: &Frame,
+            _edge: Edge,
+            _height: i32,
+            _waker: &Waker,
+        ) -> Option<Self> {
             None
         }
     }

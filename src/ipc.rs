@@ -18,6 +18,7 @@ use anyhow::{Context as _, Result};
 use eframe::egui;
 
 use crate::theme::Theme;
+use crate::wake::Waker;
 
 /// TCP port the control server binds on. Loopback-only; not configurable in
 /// v1 — picked to avoid clashing with glazewm (6123) and common dev ports.
@@ -63,7 +64,7 @@ impl IpcCommand {
 
 /// Spawn the listener thread. Returns the receive half of the channel that
 /// `WbarApp` drains each frame.
-pub fn spawn(ctx: egui::Context) -> Result<Receiver<IpcCommand>> {
+pub fn spawn(ctx: egui::Context, waker: Waker) -> Result<Receiver<IpcCommand>> {
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), PORT);
     let listener = TcpListener::bind(addr).with_context(|| format!("binding {addr}"))?;
     tracing::info!(%addr, "ipc listener bound");
@@ -75,7 +76,7 @@ pub fn spawn(ctx: egui::Context) -> Result<Receiver<IpcCommand>> {
             for conn in listener.incoming() {
                 match conn {
                     Ok(stream) => {
-                        if let Err(err) = handle_connection(stream, &tx, &ctx) {
+                        if let Err(err) = handle_connection(stream, &tx, &ctx, &waker) {
                             tracing::debug!(?err, "ipc connection error");
                         }
                     }
@@ -91,6 +92,7 @@ fn handle_connection(
     mut stream: TcpStream,
     tx: &mpsc::Sender<IpcCommand>,
     ctx: &egui::Context,
+    waker: &Waker,
 ) -> Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -102,6 +104,7 @@ fn handle_connection(
             tracing::info!(?cmd, "ipc command received");
             let _ = tx.send(cmd);
             ctx.request_repaint();
+            waker.wake();
             "ok\n".to_string()
         }
         Err(err) => {
