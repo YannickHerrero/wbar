@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Color32};
+use eframe::egui::{self, Color32, Sense, TextStyle, vec2};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Networks, RefreshKind, System};
 
 use super::Widget;
@@ -9,6 +9,13 @@ use crate::config::{SysinfoConfig, SysinfoMetric};
 use crate::theme::Palette;
 
 const BYTES_PER_GB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+/// Fixed pixel width each sysinfo metric occupies. Picked to fit
+/// "icon 100%" comfortably at 12pt monospace; long custom formats
+/// (network throughput etc.) grow the slot via the max() below so they
+/// don't get clipped. Keeping a fixed minimum means single-digit values
+/// don't make the slot collapse and shift neighbours.
+const SLOT_WIDTH: f32 = 60.0;
 
 /// Pulls a metric from sysinfo on a configurable interval and renders it via
 /// the user's format string (Python-style `{name}` / `{name:spec}` keys).
@@ -170,63 +177,42 @@ impl SysinfoWidget {
     }
 }
 
-/// Minimum visual width (chars) for the rendered value half. Pads with
-/// leading spaces so consecutive samples like "9%" and "100%" occupy the
-/// same horizontal real estate, keeping neighbouring widgets from
-/// jittering as digit counts change. The user's format spec can produce
-/// a longer string (e.g. "RAM 12.3G") — in that case no padding is
-/// added.
-const VALUE_MIN_WIDTH: usize = 4;
-
 impl Widget for SysinfoWidget {
     fn render(&mut self, ui: &mut egui::Ui) {
         self.refresh_if_due();
 
-        // Single label per widget — keeps each sysinfo widget atomic in
-        // the parent region's flow. A previous attempt used ui.with_layout
-        // to force icon-before-value ordering inside a right_to_left
-        // parent, but with_layout reserves the parent's available_size
-        // for the child, so each widget claimed the whole remaining
-        // region width and consecutive widgets started overlapping.
-        // Embedding the icon directly in the rendered string sidesteps
-        // both the direction-inheritance issue and the rect-overclaim
-        // issue.
-        let padded = pad_left_to(&self.rendered, VALUE_MIN_WIDTH);
+        // Compose "icon value" at natural width — no padding inside the
+        // string. Width-stability comes from the fixed-pixel slot below,
+        // not from char counting.
         let body = if let Some(icon) = self.current_icon() {
-            // Single space between icon and value, always — for 3-digit
-            // values like "100%" the padding alone wouldn't leave a gap
-            // and the icon would touch the first digit. The total width
-            // is still constant (icon + 1 + VALUE_MIN_WIDTH) so the
-            // no-jitter property is preserved.
-            format!("{icon} {padded}")
+            format!("{icon} {}", self.rendered)
         } else {
-            padded
+            self.rendered.clone()
         };
-        if self.should_warn() {
-            ui.colored_label(self.warn_color, body);
+
+        let color = if self.should_warn() {
+            self.warn_color
         } else {
-            ui.label(body);
-        }
+            ui.visuals().text_color()
+        };
+
+        // Lay out the text first so we know its natural size.
+        let font_id = TextStyle::Body.resolve(ui.style());
+        let galley = ui.painter().layout_no_wrap(body, font_id, color);
+
+        // Allocate a fixed-width slot (or larger if the text overflows).
+        // The parent region's cross_align=Center centres this rect
+        // vertically in the bar; we centre the text inside the rect.
+        // Result: value-width changes (e.g. "9%" → "100%") only shift
+        // the text *within* this widget's slot — neighbouring widgets
+        // never move.
+        let slot_w = SLOT_WIDTH.max(galley.size().x);
+        let slot_size = vec2(slot_w, galley.size().y);
+        let (rect, _) = ui.allocate_exact_size(slot_size, Sense::hover());
+        let text_pos = rect.center() - galley.size() / 2.0;
+        ui.painter().galley(text_pos, galley, color);
 
         ui.ctx().request_repaint_after(self.interval());
-    }
-}
-
-/// Right-align `s` within `min` characters by prefixing spaces. Strings
-/// already `>= min` chars wide are returned unchanged. Uses `chars().count()`
-/// so multi-byte glyphs in the value half (rare) still count correctly.
-fn pad_left_to(s: &str, min: usize) -> String {
-    let len = s.chars().count();
-    if len >= min {
-        s.to_string()
-    } else {
-        let pad = min - len;
-        let mut out = String::with_capacity(pad + s.len());
-        for _ in 0..pad {
-            out.push(' ');
-        }
-        out.push_str(s);
-        out
     }
 }
 
