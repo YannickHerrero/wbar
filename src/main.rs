@@ -250,6 +250,13 @@ impl WbarApp {
                 slot,
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
+                    // Force the slot to claim its full third even when no
+                    // widget renders anything (e.g. workspaces hidden because
+                    // glazewm isn't running). Without this, allocate_ui only
+                    // advances the parent cursor by the actual contents size,
+                    // so an empty left slot collapses to zero and the centre
+                    // clock slides into the left third.
+                    ui.set_min_size(slot);
                     for id in self.cfg.layout.left.clone() {
                         self.widgets.render(ui, &id);
                     }
@@ -260,6 +267,7 @@ impl WbarApp {
                 slot,
                 egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                 |ui| {
+                    ui.set_min_size(slot);
                     ui.horizontal_centered(|ui| {
                         for id in self.cfg.layout.center.clone() {
                             self.widgets.render(ui, &id);
@@ -272,6 +280,7 @@ impl WbarApp {
                 slot,
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
+                    ui.set_min_size(slot);
                     for id in self.cfg.layout.right.clone() {
                         self.widgets.render(ui, &id);
                     }
