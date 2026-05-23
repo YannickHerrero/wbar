@@ -58,8 +58,6 @@ fn main() -> eframe::Result {
 }
 
 struct WbarApp {
-    // Used by layout, font, and widget commits that follow.
-    #[allow(dead_code)]
     cfg: Config,
     pinned: bool,
 }
@@ -97,7 +95,45 @@ impl eframe::App for WbarApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.pin_to_top(ctx);
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.label("wbar");
+            self.draw_regions(ui);
+        });
+    }
+}
+
+impl WbarApp {
+    fn draw_regions(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let third = ui.available_width() / 3.0;
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(third, BAR_HEIGHT),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    for id in &self.cfg.layout.left {
+                        ui.label(id);
+                    }
+                },
+            );
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(third, BAR_HEIGHT),
+                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                |ui| {
+                    for id in &self.cfg.layout.center {
+                        ui.label(id);
+                    }
+                },
+            );
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(third, BAR_HEIGHT),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    for id in &self.cfg.layout.right {
+                        ui.label(id);
+                    }
+                },
+            );
         });
     }
 }
