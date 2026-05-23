@@ -1,74 +1,151 @@
 //! Tiny client for the GlazeWM IPC websocket. Connects to ws://127.0.0.1:6123,
-//! subscribes to the workspace/focus events we care about, queries initial
-//! state, and surfaces JSON envelopes to the rest of the app.
+//! subscribes to the workspace/focus events we care about, queries workspace
+//! state, and surfaces a parsed snapshot to widgets via a shared `Arc<RwLock>`.
 //!
-//! This commit just wires up the connection and logs traffic; the workspaces
-//! widget consumes the data in the next commit, and the smarter reconnect
-//! backoff lands the commit after that.
+//! GlazeWM's IPC format is a JSON envelope. Both event subscriptions and
+//! query responses come back through the same socket; we treat any event as
+//! "something might have changed" and just re-issue `query workspaces` to
+//! re-snapshot, since incremental patching isn't worth the complexity.
 
 use std::net::TcpStream;
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use eframe::egui;
+use serde::Deserialize;
 use tungstenite::Message;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::stream::MaybeTlsStream;
 
 const GLAZEWM_WS_URL: &str = "ws://127.0.0.1:6123";
 
-/// Subscribe to the minimum set of events that move workspaces around.
 const SUBSCRIBE_CMD: &str = concat!(
     "sub -e workspace_activated workspace_deactivated workspace_updated ",
     "focused_container_moved focus_changed",
 );
 const QUERY_WORKSPACES_CMD: &str = "query workspaces";
 
-/// Spawn a background thread that maintains a connection to glazewm and logs
-/// events. The thread will be torn down when the process exits; we keep no
-/// JoinHandle because there's nothing meaningful to wait on.
-pub fn spawn(ctx: egui::Context) {
-    thread::Builder::new()
-        .name("glazewm-ipc".into())
-        .spawn(move || run(ctx))
-        .expect("spawning glazewm IPC thread");
+/// What widgets see. Cheap to clone — small Vec of small structs.
+#[derive(Debug, Default, Clone)]
+pub struct WorkspaceState {
+    pub workspaces: Vec<WorkspaceInfo>,
+    pub connected: bool,
 }
 
-fn run(_ctx: egui::Context) {
+#[derive(Debug, Clone)]
+pub struct WorkspaceInfo {
+    /// The workspace's internal name; kept around for future widget options
+    /// (e.g. rendering name vs. display_name) and tooltip hover.
+    #[allow(dead_code)]
+    pub name: String,
+    pub display_name: String,
+    pub focused: bool,
+}
+
+/// Shared handle. Clone is cheap; both halves point at the same `Arc<RwLock>`.
+#[derive(Clone)]
+pub struct GlazewmClient {
+    state: Arc<RwLock<WorkspaceState>>,
+}
+
+impl GlazewmClient {
+    pub fn spawn(ctx: egui::Context) -> Self {
+        let state = Arc::new(RwLock::new(WorkspaceState::default()));
+        let inner = state.clone();
+        thread::Builder::new()
+            .name("glazewm-ipc".into())
+            .spawn(move || run(ctx, inner))
+            .expect("spawning glazewm IPC thread");
+        Self { state }
+    }
+
+    /// Snapshot the current state. Holds the read lock for the duration of the
+    /// clone, which is brief.
+    pub fn snapshot(&self) -> WorkspaceState {
+        self.state.read().map(|s| s.clone()).unwrap_or_default()
+    }
+}
+
+fn run(ctx: egui::Context, state: Arc<RwLock<WorkspaceState>>) {
     loop {
-        match session() {
-            Ok(()) => tracing::info!("glazewm session ended cleanly"),
-            Err(err) => tracing::warn!(error = ?err, "glazewm session error"),
+        if let Err(err) = session(&ctx, &state) {
+            tracing::warn!(error = ?err, "glazewm session error");
         }
+        set_connected(&state, false);
+        ctx.request_repaint();
         // Naive sleep — commit 19 replaces this with exponential backoff.
         thread::sleep(Duration::from_secs(1));
     }
 }
 
-fn session() -> Result<()> {
+fn session(ctx: &egui::Context, state: &Arc<RwLock<WorkspaceState>>) -> Result<()> {
     let request = GLAZEWM_WS_URL
         .into_client_request()
         .context("building ws client request")?;
     let (mut socket, _response) = tungstenite::client::client(request, connect_tcp()?)
         .map_err(|e| anyhow::anyhow!("websocket handshake failed: {e}"))?;
     tracing::info!(url = GLAZEWM_WS_URL, "glazewm connected");
+    set_connected(state, true);
+    ctx.request_repaint();
 
     socket.send(Message::text(SUBSCRIBE_CMD))?;
     socket.send(Message::text(QUERY_WORKSPACES_CMD))?;
 
     loop {
         match socket.read()? {
-            Message::Text(text) => tracing::debug!(payload = %text, "glazewm message"),
-            Message::Binary(_) => tracing::debug!("glazewm binary frame (ignored)"),
+            Message::Text(text) => handle_text(&text, ctx, state, &mut socket)?,
             Message::Ping(p) => socket.send(Message::Pong(p))?,
-            Message::Pong(_) => {}
             Message::Close(_) => {
                 tracing::info!("glazewm server closed connection");
                 return Ok(());
             }
-            Message::Frame(_) => {}
+            Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
         }
+    }
+}
+
+fn handle_text(
+    text: &str,
+    ctx: &egui::Context,
+    state: &Arc<RwLock<WorkspaceState>>,
+    socket: &mut tungstenite::WebSocket<MaybeTlsStream<TcpStream>>,
+) -> Result<()> {
+    let envelope: Envelope = match serde_json::from_str(text) {
+        Ok(e) => e,
+        Err(err) => {
+            tracing::debug!(?err, "glazewm: unparseable envelope");
+            return Ok(());
+        }
+    };
+
+    match envelope.message_type.as_deref() {
+        Some("client_response") => {
+            if let Some(ws_list) = extract_workspaces(&envelope.data) {
+                update_state(state, ws_list);
+                ctx.request_repaint();
+            }
+        }
+        Some("event_subscription") => {
+            // Any change → re-query for a fresh snapshot.
+            socket.send(Message::text(QUERY_WORKSPACES_CMD))?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn update_state(state: &Arc<RwLock<WorkspaceState>>, new_list: Vec<WorkspaceInfo>) {
+    if let Ok(mut s) = state.write() {
+        s.workspaces = new_list;
+        s.connected = true;
+    }
+}
+
+fn set_connected(state: &Arc<RwLock<WorkspaceState>>, connected: bool) {
+    if let Ok(mut s) = state.write() {
+        s.connected = connected;
     }
 }
 
@@ -76,4 +153,47 @@ fn connect_tcp() -> Result<MaybeTlsStream<TcpStream>> {
     let stream = TcpStream::connect(("127.0.0.1", 6123)).context("connecting to glazewm")?;
     stream.set_nodelay(true).ok();
     Ok(MaybeTlsStream::Plain(stream))
+}
+
+// ---------------------------------------------------------------------------
+// JSON shapes
+//
+// GlazeWM's IPC schema isn't formally versioned in our consumer; if the server
+// adds fields or changes case, we want to fail soft (log debug, keep stale
+// state) rather than crash. That's why everything below uses #[serde(default)]
+// and Option, and why we re-query rather than apply patches.
+
+#[derive(Debug, Deserialize)]
+struct Envelope {
+    #[serde(rename = "messageType")]
+    message_type: Option<String>,
+    data: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceJson {
+    #[serde(default)]
+    name: String,
+    #[serde(default, rename = "displayName")]
+    display_name: Option<String>,
+    #[serde(default, rename = "hasFocus")]
+    has_focus: bool,
+}
+
+fn extract_workspaces(data: &Option<serde_json::Value>) -> Option<Vec<WorkspaceInfo>> {
+    let data = data.as_ref()?;
+    let workspaces = data
+        .get("workspaces")
+        .or_else(|| data.pointer("/workspaces"))?;
+    let parsed: Vec<WorkspaceJson> = serde_json::from_value(workspaces.clone()).ok()?;
+    Some(
+        parsed
+            .into_iter()
+            .map(|w| WorkspaceInfo {
+                display_name: w.display_name.clone().unwrap_or_else(|| w.name.clone()),
+                name: w.name,
+                focused: w.has_focus,
+            })
+            .collect(),
+    )
 }

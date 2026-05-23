@@ -14,6 +14,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::appbar::{AppBar, Edge};
 use crate::config::Config;
+use crate::glazewm::GlazewmClient;
 use crate::hotreload::HotReload;
 use crate::widgets::Widgets;
 
@@ -68,9 +69,9 @@ fn main() -> eframe::Result {
                 }
             });
 
-            glazewm::spawn(cc.egui_ctx.clone());
+            let glazewm = GlazewmClient::spawn(cc.egui_ctx.clone());
 
-            Ok(Box::new(WbarApp::new(cfg, hot)))
+            Ok(Box::new(WbarApp::new(cfg, hot, glazewm)))
         }),
     )
 }
@@ -78,17 +79,21 @@ fn main() -> eframe::Result {
 struct WbarApp {
     cfg: Config,
     widgets: Widgets,
+    glazewm: GlazewmClient,
     pinned: bool,
     hot: Option<HotReload>,
     appbar: Option<AppBar>,
 }
 
 impl WbarApp {
-    fn new(cfg: Config, hot: Option<HotReload>) -> Self {
-        let widgets = Widgets::from_config(&cfg);
+    fn new(cfg: Config, hot: Option<HotReload>, glazewm: GlazewmClient) -> Self {
+        let palette = cfg.effective_palette();
+        let radius = cfg.effective_tokens().radius_sm;
+        let widgets = Widgets::from_config(&cfg, &palette, radius, &glazewm);
         Self {
             cfg,
             widgets,
+            glazewm,
             pinned: false,
             hot,
             appbar: None,
@@ -118,8 +123,9 @@ impl WbarApp {
         }
         if let Some(cfg) = latest {
             let palette = cfg.effective_palette();
+            let radius = cfg.effective_tokens().radius_sm;
             theme::apply(ctx, &palette, theme::is_dark(cfg.theme));
-            self.widgets = Widgets::from_config(&cfg);
+            self.widgets = Widgets::from_config(&cfg, &palette, radius, &self.glazewm);
             self.cfg = cfg;
         }
     }

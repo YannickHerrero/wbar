@@ -3,10 +3,13 @@ use std::collections::BTreeMap;
 use eframe::egui;
 
 use crate::config::{Config, WidgetConfig};
+use crate::glazewm::GlazewmClient;
+use crate::theme::Palette;
 
 mod clock;
 mod command;
 mod sysinfo;
+mod workspaces;
 
 pub trait Widget {
     fn render(&mut self, ui: &mut egui::Ui);
@@ -19,11 +22,16 @@ pub struct Widgets {
 }
 
 impl Widgets {
-    pub fn from_config(cfg: &Config) -> Self {
+    pub fn from_config(
+        cfg: &Config,
+        palette: &Palette,
+        radius: f32,
+        glazewm: &GlazewmClient,
+    ) -> Self {
         let items = cfg
             .widgets
             .iter()
-            .map(|(id, wc)| (id.clone(), build(id, wc)))
+            .map(|(id, wc)| (id.clone(), build(id, wc, palette, radius, glazewm)))
             .collect();
         Self { items }
     }
@@ -41,20 +49,22 @@ impl Widgets {
     }
 }
 
-fn build(id: &str, cfg: &WidgetConfig) -> Box<dyn Widget> {
+fn build(
+    _id: &str,
+    cfg: &WidgetConfig,
+    palette: &Palette,
+    radius: f32,
+    glazewm: &GlazewmClient,
+) -> Box<dyn Widget> {
     match cfg {
         WidgetConfig::Clock(c) => Box::new(clock::ClockWidget::new(c.clone())),
         WidgetConfig::Sysinfo(c) => Box::new(sysinfo::SysinfoWidget::new(c.clone())),
         WidgetConfig::Command(c) => Box::new(command::CommandWidget::new(c.clone())),
-        // GlazeWM workspaces lands in commit 18.
-        WidgetConfig::Glazewm(_) => Box::new(Placeholder(id.to_string())),
-    }
-}
-
-struct Placeholder(String);
-
-impl Widget for Placeholder {
-    fn render(&mut self, ui: &mut egui::Ui) {
-        ui.label(&self.0);
+        WidgetConfig::Glazewm(c) => Box::new(workspaces::WorkspacesWidget::new(
+            c.clone(),
+            glazewm.clone(),
+            palette,
+            radius,
+        )),
     }
 }
