@@ -92,6 +92,21 @@ fn main() -> eframe::Result {
             let palette = cfg.effective_palette();
             theme::apply(&cc.egui_ctx, &palette, theme::is_dark(cfg.theme));
             theme::apply_font_size(&cc.egui_ctx, cfg.font.size);
+
+            // Keepalive: when the bar is hidden the root viewport stops
+            // requesting paints, so the eframe loop sleeps and tray / IPC
+            // events that flip visibility back on never fire update().
+            // Tick the context every 500ms so update() runs at least twice
+            // a second regardless of viewport visibility — cheap (we
+            // already redraw the clock every second) and means Toggle from
+            // the tray always re-shows the bar.
+            let keepalive_ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    keepalive_ctx.request_repaint();
+                }
+            });
             // A status bar shouldn't expose drag-selection on its labels —
             // the cursor changes to a text caret on hover and click-drag
             // selects the value, which is noise nobody wants here.
