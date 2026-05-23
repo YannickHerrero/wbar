@@ -36,6 +36,7 @@ mod imp {
 
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
     use windows::Win32::UI::Shell::{
         ABE_BOTTOM, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA,
         SHAppBarMessage,
@@ -142,7 +143,20 @@ mod imp {
         }
     }
 
-    unsafe fn do_register(hwnd: HWND, edge: Edge, height: i32) -> Option<AppBar> {
+    unsafe fn do_register(hwnd: HWND, edge: Edge, logical_height: i32) -> Option<AppBar> {
+        // SHAppBarMessage and SetWindowPos work in *physical* pixels (the
+        // process is per-monitor-DPI aware via eframe). bar.height in
+        // config is in *logical* pixels — eframe renders the window at
+        // logical_height × dpi_scale physical pixels. If we don't scale
+        // before talking to the shell, the AppBar reservation
+        // under-reports the bar height on hi-DPI displays and tiling
+        // window managers can't compute the right work area. At 1.25x
+        // DPI a 28-logical bar is 35 physical px but we'd reserve 28,
+        // leaving a 7px strip where the bar paints but apps still tile.
+        let dpi = unsafe { GetDpiForWindow(hwnd) };
+        let scale = if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 };
+        let physical_height = (logical_height as f32 * scale).round() as i32;
+
         let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
         let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
 
@@ -165,10 +179,10 @@ mod imp {
         match edge {
             Edge::Top => {
                 abd.rc.top = 0;
-                abd.rc.bottom = height;
+                abd.rc.bottom = physical_height;
             }
             Edge::Bottom => {
-                abd.rc.top = screen_h - height;
+                abd.rc.top = screen_h - physical_height;
                 abd.rc.bottom = screen_h;
             }
         }
@@ -179,8 +193,8 @@ mod imp {
         // Re-pin the height after QUERYPOS may have widened the rect along the
         // perpendicular axis.
         match edge {
-            Edge::Top => abd.rc.bottom = abd.rc.top + height,
-            Edge::Bottom => abd.rc.top = abd.rc.bottom - height,
+            Edge::Top => abd.rc.bottom = abd.rc.top + physical_height,
+            Edge::Bottom => abd.rc.top = abd.rc.bottom - physical_height,
         }
 
         unsafe { SHAppBarMessage(ABM_SETPOS, &mut abd) };
@@ -205,7 +219,9 @@ mod imp {
             left = abd.rc.left,
             top = abd.rc.top,
             width = w,
-            height = h,
+            physical_height = h,
+            logical_height,
+            dpi,
             "appbar registered",
         );
 
