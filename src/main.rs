@@ -1,3 +1,4 @@
+mod appbar;
 // Several Palette fields and Tokens are consumed by widgets in later commits.
 #[allow(dead_code)]
 mod theme;
@@ -9,6 +10,7 @@ mod hotreload;
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
+use crate::appbar::{AppBar, Edge};
 use crate::config::Config;
 use crate::hotreload::HotReload;
 
@@ -72,6 +74,7 @@ struct WbarApp {
     cfg: Config,
     pinned: bool,
     hot: Option<HotReload>,
+    appbar: Option<AppBar>,
 }
 
 impl WbarApp {
@@ -80,7 +83,20 @@ impl WbarApp {
             cfg,
             pinned: false,
             hot,
+            appbar: None,
         }
+    }
+
+    /// Register the bar with the Windows shell once the window has an HWND.
+    /// SetWindowPos inside register() also moves the window to the rect the
+    /// shell allocated, so this takes over from `pin_to_top` once it succeeds.
+    fn register_appbar(&mut self, frame: &eframe::Frame) {
+        if self.appbar.is_some() {
+            return;
+        }
+        let edge = Edge::Top;
+        let height = BAR_HEIGHT as i32;
+        self.appbar = appbar::register(frame, edge, height);
     }
 
     /// Drain any pending config reloads from the watcher and apply the latest.
@@ -124,9 +140,10 @@ impl WbarApp {
 }
 
 impl eframe::App for WbarApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.drain_reloads(ctx);
         self.pin_to_top(ctx);
+        self.register_appbar(frame);
         egui::CentralPanel::default().show(ctx, |ui| {
             self.draw_regions(ui);
         });

@@ -3568,10 +3568,12 @@ dependencies = [
  "dirs",
  "eframe",
  "notify",
+ "raw-window-handle",
  "serde",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "windows 0.61.3",
 ]
 
 [[package]]
