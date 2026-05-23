@@ -30,6 +30,7 @@ pub enum TrayEventKind {
 #[cfg(windows)]
 mod imp {
     use std::collections::BTreeMap;
+    use std::sync::mpsc::{self, Receiver};
 
     use anyhow::Result;
     use eframe::egui;
@@ -56,6 +57,11 @@ mod imp {
         toggle_id: MenuId,
         quit_id: MenuId,
         theme_ids: BTreeMap<MenuId, Theme>,
+        /// MenuEvents forwarded by the muda handler. We can't use
+        /// `MenuEvent::receiver()` because muda's send() routes to *either*
+        /// the handler or the channel — never both — and we need the
+        /// handler to wake the egui loop via ctx.request_repaint().
+        rx: Receiver<MenuEvent>,
     }
 
     pub fn build(ctx: egui::Context) -> Result<Tray> {
@@ -86,12 +92,13 @@ mod imp {
             .with_icon(icon)
             .build()?;
 
-        // Without this handler, MenuEvents land in the global channel but
-        // nothing wakes the eframe event loop while the bar window is
-        // hidden — so Quit clicks would do nothing once the bar is
-        // hidden. request_repaint() forces an update tick which then drains
-        // the channel via tray::poll.
-        MenuEvent::set_event_handler(Some(move |_event| {
+        // muda's MenuEvent::send is either/or: setting a handler suppresses
+        // delivery to MenuEvent::receiver(). So we forward events into our
+        // own channel from inside the handler — that way the handler still
+        // wakes the egui loop and tray::poll still sees every click.
+        let (tx, rx) = mpsc::channel::<MenuEvent>();
+        MenuEvent::set_event_handler(Some(move |event| {
+            let _ = tx.send(event);
             ctx.request_repaint();
         }));
 
@@ -101,14 +108,15 @@ mod imp {
             toggle_id,
             quit_id,
             theme_ids,
+            rx,
         })
     }
 
-    /// Drain the global menu-event channel and return the *latest* event
+    /// Drain the local forwarded channel and return the *latest* event
     /// since the last call (multiple clicks per frame collapse to one).
     pub fn poll(tray: &Tray) -> Option<TrayEvent> {
         let mut latest = None;
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
+        while let Ok(event) = tray.rx.try_recv() {
             latest = if event.id == tray.toggle_id {
                 Some(TrayEvent::Toggle)
             } else if event.id == tray.quit_id {
