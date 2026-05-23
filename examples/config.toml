@@ -1,0 +1,83 @@
+# wbar — example config
+#
+# Copy this file to %APPDATA%\wbar\config.toml (Windows) or
+# $XDG_CONFIG_HOME/wbar/config.toml (Linux dev) and tweak. Changes are
+# picked up live — no restart required for theme, palette, font, widget
+# format strings, or layout. Changes to bar.position / bar.height
+# re-register the AppBar transparently.
+
+[bar]
+position = "top"      # "top" | "bottom"
+height = 32
+
+[font]
+family = "Default"    # currently informational; default font is used
+size = 13.0
+
+# Pick one of the five built-in themes:
+#   Paper — warm cream, ink black, terracotta accent
+#   Stone — cool gray, blue accent
+#   Sage  — muted greens
+#   Clay  — warm earth tones
+#   Ink   — black background, off-white text (only dark theme)
+theme = "Paper"
+
+# Optional: override individual colours of the selected theme.
+# Each field is a "#RRGGBB" or "#RRGGBBAA" hex string. Omit a field
+# and the theme's value wins.
+# [palette]
+# accent = "#3F5C32"
+# muted  = "#E8E8E8"
+
+# Optional: override spacing / radius / font-size tokens.
+# [tokens]
+# radius_sm = 6.0
+# font_body = 14.0
+
+# Which widgets go in which region. Each id below references a
+# [widgets.<id>] table.
+[layout]
+left   = ["workspaces"]
+center = ["clock"]
+right  = ["cpu", "ram", "net"]
+
+[widgets.workspaces]
+type = "glazewm"
+show_empty = false
+
+[widgets.clock]
+type = "clock"
+# strftime format — see https://docs.rs/chrono/latest/chrono/format/strftime/
+format = "%a %d %b  %H:%M"
+tick_seconds = 1
+
+[widgets.cpu]
+type = "sysinfo"
+metric = "cpu"
+# Available template vars: {value} = cpu usage %
+format = "CPU {value:>3.0}%"
+interval_seconds = 2
+
+[widgets.ram]
+type = "sysinfo"
+metric = "ram"
+# Available template vars: {used_gb}, {total_gb}, {free_gb}, {value} (used %)
+format = "RAM {used_gb:.1}/{total_gb:.1}G"
+interval_seconds = 2
+
+[widgets.net]
+type = "sysinfo"
+metric = "network"
+# "*" or omit to sum across all interfaces; or set a specific interface name.
+interface = "*"
+# Available template vars: {rx_bps}, {tx_bps}, {rx_kbps}, {tx_kbps}, {rx_mbps}, {tx_mbps}
+format = "↓{rx_kbps:>5.0}k ↑{tx_kbps:>5.0}k"
+interval_seconds = 1
+
+# A custom command widget runs an arbitrary shell command on an interval
+# and shows the trimmed first line of stdout. Wrap with cmd /C on Windows
+# (handled internally) and sh -c elsewhere.
+# [widgets.weather]
+# type = "command"
+# command = "curl -s wttr.in/?format=3"
+# interval_seconds = 600
