@@ -37,8 +37,10 @@ impl WorkspacesWidget {
 impl Widget for WorkspacesWidget {
     fn render(&mut self, ui: &mut egui::Ui) {
         let state = self.client.snapshot();
-        if !state.connected {
-            ui.colored_label(self.inactive_fg, "…");
+        // No glazewm, no widget — the bar should look indistinguishable from
+        // a config without the workspaces entry so running wbar standalone
+        // (no glazewm installed/running) just works.
+        if !state.connected || state.workspaces.is_empty() {
             return;
         }
 
