@@ -50,5 +50,7 @@ type = "sysinfo"
 metric = "battery"
 # nf-fa-battery_full (Nerd Font: Font Awesome)
 icon = ""
+# nf-md-battery_charging (Nerd Font: Material Design) - swapped in on AC.
+charging_icon = "󰂄"
 format = "{value:.0}%"
 interval_seconds = 10

@@ -69,7 +69,8 @@ warn_above = 85.0     # text turns red above this %
 [widgets.battery]
 type = "sysinfo"
 metric = "battery"
-icon = ""       # nf-fa-battery_full
+icon = ""               # nf-fa-battery_full — shown on battery
+charging_icon = "󰂄"      # nf-md-battery_charging — shown on AC
 format = "{value:.0}%"
 interval_seconds = 10
 # Available template vars: {value} (charge %), {charging} (1.0 or 0.0)

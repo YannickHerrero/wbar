@@ -21,6 +21,9 @@ pub struct SysinfoWidget {
     /// Most recent `value` extracted from the sample. Compared against
     /// `cfg.warn_above` to decide whether to apply the warn tint.
     current_value: Option<f64>,
+    /// Most recent `charging` flag for the Battery metric. Used to pick
+    /// between `cfg.icon` and `cfg.charging_icon`.
+    current_charging: bool,
     /// Resolved warn colour: explicit `cfg.warn_color` if set, otherwise
     /// `palette.error`. Stored to avoid re-resolving on every frame.
     warn_color: Color32,
@@ -46,6 +49,7 @@ impl SysinfoWidget {
             last_sample: None,
             rendered: String::new(),
             current_value: None,
+            current_charging: false,
             warn_color,
         }
     }
@@ -131,6 +135,7 @@ impl SysinfoWidget {
                 Some(m)
             }
             SysinfoMetric::Battery => read_battery().map(|b| {
+                self.current_charging = b.charging;
                 let mut m = HashMap::new();
                 m.insert("value".into(), b.percent);
                 m.insert("charging".into(), if b.charging { 1.0 } else { 0.0 });
@@ -141,6 +146,19 @@ impl SysinfoWidget {
         if let Some(vars) = vars {
             self.current_value = vars.get("value").copied();
             self.rendered = format_with(&self.cfg.format, &vars);
+        }
+    }
+
+    /// Pick between `cfg.icon` and `cfg.charging_icon` based on the most
+    /// recent battery sample. Non-Battery metrics always use `cfg.icon`.
+    fn current_icon(&self) -> Option<&str> {
+        if matches!(self.cfg.metric, SysinfoMetric::Battery) && self.current_charging {
+            self.cfg
+                .charging_icon
+                .as_deref()
+                .or(self.cfg.icon.as_deref())
+        } else {
+            self.cfg.icon.as_deref()
         }
     }
 
@@ -162,7 +180,7 @@ impl Widget for SysinfoWidget {
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             // 4px gap between the icon and the value, local to this row.
             ui.spacing_mut().item_spacing.x = 4.0;
-            if let Some(icon) = &self.cfg.icon {
+            if let Some(icon) = self.current_icon() {
                 ui.label(icon);
             }
             if self.should_warn() {

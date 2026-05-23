@@ -238,6 +238,10 @@ pub struct SysinfoConfig {
     /// the formatted value.
     #[serde(default)]
     pub icon: Option<String>,
+    /// Battery-only: glyph rendered in place of `icon` when the laptop is
+    /// charging (AC plugged in). Ignored for other metrics.
+    #[serde(default)]
+    pub charging_icon: Option<String>,
     /// When the sampled `value` exceeds this threshold, the rendered label
     /// uses `warn_color`. Useful for "CPU red when > 85%". Set to `None` to
     /// disable.
