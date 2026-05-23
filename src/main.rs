@@ -43,9 +43,7 @@ const BAR_EDGE_PAD: i8 = 16;
 /// right-side bearing don't paint past the slot edge.
 const RIGHT_EDGE_CUSHION: f32 = 8.0;
 /// Gap between consecutive widgets within the left and right regions.
-/// Wider than egui's default (~8) so memory / cpu / battery don't visually
-/// merge into one glyph soup.
-const REGION_ITEM_SPACING: f32 = 24.0;
+const REGION_ITEM_SPACING: f32 = 14.0;
 
 fn main() -> eframe::Result {
     // CLI client mode: any first argv that matches a known subcommand sends
