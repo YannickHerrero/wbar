@@ -12,9 +12,6 @@ mod config;
 mod fonts;
 mod glazewm;
 mod hotreload;
-// The server side (ipc::spawn) is wired up in the next commit. ipc::send is
-// already consumed by the CLI client below.
-#[allow(dead_code)]
 mod ipc;
 mod tray;
 mod widgets;
@@ -22,11 +19,15 @@ mod widgets;
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
+use std::sync::mpsc::Receiver;
+
 use crate::appbar::{AppBar, Edge};
 use crate::config::{BarPosition, Config};
 use crate::glazewm::GlazewmClient;
 use crate::hotreload::HotReload;
-use crate::tray::Tray;
+use crate::ipc::IpcCommand;
+use crate::theme::Theme;
+use crate::tray::{Tray, TrayEvent};
 use crate::widgets::Widgets;
 
 /// Horizontal padding between the bar contents and the screen edges,
@@ -106,7 +107,15 @@ fn main() -> eframe::Result {
                 }
             };
 
-            Ok(Box::new(WbarApp::new(cfg, hot, glazewm, tray)))
+            let ipc_rx = match ipc::spawn(cc.egui_ctx.clone()) {
+                Ok(rx) => Some(rx),
+                Err(err) => {
+                    tracing::warn!(error = ?err, "ipc control server disabled");
+                    None
+                }
+            };
+
+            Ok(Box::new(WbarApp::new(cfg, hot, glazewm, tray, ipc_rx)))
         }),
     )
 }
@@ -176,9 +185,11 @@ struct WbarApp {
     widgets: Widgets,
     glazewm: GlazewmClient,
     pinned: bool,
+    visible: bool,
     hot: Option<HotReload>,
     appbar: Option<AppBar>,
     tray: Option<Tray>,
+    ipc_rx: Option<Receiver<IpcCommand>>,
 }
 
 impl WbarApp {
@@ -187,6 +198,7 @@ impl WbarApp {
         hot: Option<HotReload>,
         glazewm: GlazewmClient,
         tray: Option<Tray>,
+        ipc_rx: Option<Receiver<IpcCommand>>,
     ) -> Self {
         let palette = cfg.effective_palette();
         let radius = cfg.effective_tokens().radius_sm;
@@ -196,10 +208,78 @@ impl WbarApp {
             widgets,
             glazewm,
             pinned: false,
+            visible: true,
             hot,
             appbar: None,
             tray,
+            ipc_rx,
         }
+    }
+
+    /// Drain IPC + tray events and reconcile visibility / theme. Returns
+    /// true if the app should exit on this frame (Quit was received).
+    fn handle_controls(&mut self, ctx: &egui::Context) -> bool {
+        let prev_visible = self.visible;
+        let mut quit_requested = false;
+
+        // Tray menu first — its events feed the same command set.
+        if let Some(t) = &self.tray
+            && let Some(event) = tray::poll(t)
+        {
+            match event {
+                TrayEvent::Toggle => self.visible = !self.visible,
+                TrayEvent::Show => self.visible = true,
+                TrayEvent::Hide => self.visible = false,
+                TrayEvent::Quit => quit_requested = true,
+            }
+        }
+
+        // Then any pending IPC commands. Drain into a Vec first so the
+        // receiver borrow ends before we call &mut self methods like
+        // apply_theme inside the dispatch loop.
+        let pending: Vec<IpcCommand> = if let Some(rx) = &self.ipc_rx {
+            std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        } else {
+            Vec::new()
+        };
+        for cmd in pending {
+            tracing::debug!(?cmd, "applying ipc command");
+            match cmd {
+                IpcCommand::Toggle => self.visible = !self.visible,
+                IpcCommand::Show => self.visible = true,
+                IpcCommand::Hide => self.visible = false,
+                IpcCommand::Quit => quit_requested = true,
+                IpcCommand::SetTheme(theme) => self.apply_theme(ctx, theme),
+            }
+        }
+
+        if self.visible != prev_visible {
+            self.apply_visibility(ctx);
+        }
+        quit_requested
+    }
+
+    fn apply_visibility(&mut self, ctx: &egui::Context) {
+        if self.visible {
+            tracing::info!("showing bar");
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            // The next register_appbar() call will re-claim AppBar space.
+        } else {
+            tracing::info!("hiding bar");
+            // Drop the AppBar first so other windows reflow before the
+            // hide takes effect, avoiding a one-frame visual glitch.
+            self.appbar = None;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+    }
+
+    fn apply_theme(&mut self, ctx: &egui::Context, theme: Theme) {
+        tracing::info!(?theme, "switching theme via ipc");
+        self.cfg.theme = theme;
+        let palette = self.cfg.effective_palette();
+        let radius = self.cfg.effective_tokens().radius_sm;
+        theme::apply(ctx, &palette, theme::is_dark(theme));
+        self.widgets = Widgets::from_config(&self.cfg, &palette, radius, &self.glazewm);
     }
 
     fn edge(&self) -> Edge {
@@ -283,16 +363,22 @@ impl WbarApp {
 impl eframe::App for WbarApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.drain_reloads(ctx);
-        self.pin_to_edge(ctx);
-        self.register_appbar(frame);
-        if let Some(t) = &self.tray
-            && tray::poll_quit(t)
-        {
-            tracing::info!("tray Quit clicked");
+        let quit = self.handle_controls(ctx);
+        if quit {
+            tracing::info!("quit requested (tray or ipc)");
             // Dropping WbarApp on close also drops the AppBar, which issues
             // ABM_REMOVE — the taskbar reflows immediately.
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
         }
+        if !self.visible {
+            // Skip pin / register / render when hidden; the window is
+            // already invisible and the AppBar reservation released. IPC
+            // can still wake us up to flip back to visible.
+            return;
+        }
+        self.pin_to_edge(ctx);
+        self.register_appbar(frame);
 
         // CentralPanel defaults to a Frame with ~8px margins on every side,
         // which would eat most of a 28px bar and leave too little vertical
