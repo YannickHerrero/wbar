@@ -1,0 +1,22 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release
+        run: cargo build --release
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/wbar.exe
+          generate_release_notes: true
