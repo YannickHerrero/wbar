@@ -183,7 +183,12 @@ impl Widget for SysinfoWidget {
         // directly in the rendered string sidesteps both the direction-
         // inheritance issue and the rect-overclaim issue.
         let body = if let Some(icon) = self.current_icon() {
-            format!("{icon}  {}", self.rendered)
+            // Single space between icon and value — tight but legible. The
+            // value half is expected to use a right-aligned format spec
+            // (e.g. "{value:>3.0}%") so the overall width stays constant
+            // as the number changes from 1 to 2 to 3 digits, keeping
+            // neighbouring widgets from jumping on each redraw.
+            format!("{icon} {}", self.rendered)
         } else {
             self.rendered.clone()
         };

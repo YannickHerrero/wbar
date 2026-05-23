@@ -54,14 +54,14 @@ tick_seconds = 1
 type = "sysinfo"
 metric = "ram"
 icon = ""       # nf-fa-microchip; needs a Nerd Font installed
-format = "{value:.0}%"
+format = "{value:>3.0}%"
 interval_seconds = 2
 
 [widgets.cpu]
 type = "sysinfo"
 metric = "cpu"
 icon = ""       # nf-oct-cpu
-format = "{value:.0}%"
+format = "{value:>3.0}%"
 interval_seconds = 2
 warn_above = 85.0     # text turns red above this %
 # warn_color = "#FF0000"  # explicit override (defaults to palette.error)
@@ -71,7 +71,7 @@ type = "sysinfo"
 metric = "battery"
 icon = ""               # nf-fa-battery_full — shown on battery
 charging_icon = "󰂄"      # nf-md-battery_charging — shown on AC
-format = "{value:.0}%"
+format = "{value:>3.0}%"
 interval_seconds = 10
 # Available template vars: {value} (charge %), {charging} (1.0 or 0.0)
 

@@ -33,7 +33,7 @@ type = "sysinfo"
 metric = "ram"
 # nf-fa-microchip (Nerd Font: Font Awesome)
 icon = ""
-format = "{value:.0}%"
+format = "{value:>3.0}%"
 interval_seconds = 2
 
 [widgets.cpu]
@@ -41,7 +41,7 @@ type = "sysinfo"
 metric = "cpu"
 # nf-oct-cpu (Nerd Font: Octicons)
 icon = ""
-format = "{value:.0}%"
+format = "{value:>3.0}%"
 interval_seconds = 2
 warn_above = 85.0
 
@@ -52,5 +52,5 @@ metric = "battery"
 icon = ""
 # nf-md-battery_charging (Nerd Font: Material Design) - swapped in on AC.
 charging_icon = "󰂄"
-format = "{value:.0}%"
+format = "{value:>3.0}%"
 interval_seconds = 10
