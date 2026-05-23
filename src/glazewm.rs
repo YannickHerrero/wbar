@@ -76,15 +76,48 @@ const BACKOFF_RESET_AFTER: Duration = Duration::from_secs(5);
 
 fn run(ctx: egui::Context, state: Arc<RwLock<WorkspaceState>>) {
     let mut backoff = BACKOFF_MIN;
+    // Track whether we've ever successfully connected, so the log path can
+    // distinguish "glazewm just disappeared" (worth a warn) from "glazewm
+    // isn't running and probably won't be" (worth one info, then silence).
+    let mut ever_connected = false;
+    let mut unreachable_logged = false;
     loop {
         let connected_at = Instant::now();
         let result = session(&ctx, &state);
         let stayed_up_for = connected_at.elapsed();
+        let connected_this_round = stayed_up_for >= Duration::from_millis(50)
+            && state.read().map(|s| s.connected).unwrap_or(false);
 
         match result {
-            Ok(()) => tracing::info!("glazewm session ended cleanly"),
-            Err(err) => tracing::warn!(error = ?err, "glazewm session error"),
+            Ok(()) => {
+                tracing::info!("glazewm session ended cleanly");
+                ever_connected = true;
+                unreachable_logged = false;
+            }
+            Err(err) if ever_connected => {
+                // We had a working session and lost it — that's worth a warn.
+                tracing::warn!(error = ?err, "glazewm session dropped");
+                unreachable_logged = false;
+            }
+            Err(err) if !unreachable_logged => {
+                // First time we couldn't reach glazewm. One quiet log, then
+                // we go silent so this isn't spam when glazewm isn't running.
+                tracing::info!(
+                    error = %err,
+                    "glazewm not reachable; the workspaces widget will stay disabled until it appears",
+                );
+                unreachable_logged = true;
+            }
+            Err(err) => {
+                tracing::trace!(error = ?err, "glazewm still unreachable");
+            }
         }
+
+        if connected_this_round {
+            ever_connected = true;
+            unreachable_logged = false;
+        }
+
         set_connected(&state, false);
         ctx.request_repaint();
 
