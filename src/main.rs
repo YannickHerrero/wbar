@@ -12,6 +12,9 @@ mod config;
 mod fonts;
 mod glazewm;
 mod hotreload;
+// Listener spun up + receiver consumed in the next two commits.
+#[allow(dead_code)]
+mod ipc;
 mod tray;
 mod widgets;
 

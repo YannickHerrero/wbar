@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::FromStr;
 
 use eframe::egui::{Color32, Context, Stroke, Visuals};
 use serde::de::{self, Visitor};
@@ -12,6 +13,22 @@ pub enum Theme {
     Sage,
     Clay,
     Ink,
+}
+
+impl FromStr for Theme {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "paper" => Ok(Self::Paper),
+            "stone" => Ok(Self::Stone),
+            "sage" => Ok(Self::Sage),
+            "clay" => Ok(Self::Clay),
+            "ink" => Ok(Self::Ink),
+            _ => Err(format!(
+                "unknown theme {s:?} (expected Paper, Stone, Sage, Clay, or Ink)"
+            )),
+        }
+    }
 }
 
 pub struct Palette {
