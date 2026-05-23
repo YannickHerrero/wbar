@@ -1,0 +1,10 @@
+[package]
+name = "wbar"
+version = "0.1.0"
+edition = "2024"
+description = "Minimalist status bar for Windows + GlazeWM"
+license = "MIT"
+repository = "https://github.com/yannickherrero/wbar"
+readme = "README.md"
+
+[dependencies]
