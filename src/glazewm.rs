@@ -10,7 +10,7 @@
 use std::net::TcpStream;
 use std::sync::{Arc, RwLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use eframe::egui;
@@ -68,15 +68,32 @@ impl GlazewmClient {
     }
 }
 
+const BACKOFF_MIN: Duration = Duration::from_millis(500);
+const BACKOFF_MAX: Duration = Duration::from_secs(10);
+/// If a session stayed up at least this long, treat it as "real" and reset
+/// backoff. Otherwise glazewm crash-looping would peg us at the minimum delay.
+const BACKOFF_RESET_AFTER: Duration = Duration::from_secs(5);
+
 fn run(ctx: egui::Context, state: Arc<RwLock<WorkspaceState>>) {
+    let mut backoff = BACKOFF_MIN;
     loop {
-        if let Err(err) = session(&ctx, &state) {
-            tracing::warn!(error = ?err, "glazewm session error");
+        let connected_at = Instant::now();
+        let result = session(&ctx, &state);
+        let stayed_up_for = connected_at.elapsed();
+
+        match result {
+            Ok(()) => tracing::info!("glazewm session ended cleanly"),
+            Err(err) => tracing::warn!(error = ?err, "glazewm session error"),
         }
         set_connected(&state, false);
         ctx.request_repaint();
-        // Naive sleep — commit 19 replaces this with exponential backoff.
-        thread::sleep(Duration::from_secs(1));
+
+        if stayed_up_for >= BACKOFF_RESET_AFTER {
+            backoff = BACKOFF_MIN;
+        }
+        tracing::debug!(delay = ?backoff, "glazewm reconnect scheduled");
+        thread::sleep(backoff);
+        backoff = (backoff * 2).min(BACKOFF_MAX);
     }
 }
 
