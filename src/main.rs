@@ -1,3 +1,7 @@
+// Release builds run as a Windows GUI app (no console window). Debug builds
+// stay on the console subsystem so `cargo run` still shows tracing output.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod appbar;
 // Several Palette fields and Tokens are consumed by widgets in later commits.
 #[allow(dead_code)]
