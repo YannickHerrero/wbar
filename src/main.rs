@@ -92,6 +92,12 @@ fn main() -> eframe::Result {
             let palette = cfg.effective_palette();
             theme::apply(&cc.egui_ctx, &palette, theme::is_dark(cfg.theme));
             theme::apply_font_size(&cc.egui_ctx, cfg.font.size);
+            // A status bar shouldn't expose drag-selection on its labels —
+            // the cursor changes to a text caret on hover and click-drag
+            // selects the value, which is noise nobody wants here.
+            cc.egui_ctx.style_mut(|s| {
+                s.interaction.selectable_labels = false;
+            });
 
             let hot =
                 config_path
