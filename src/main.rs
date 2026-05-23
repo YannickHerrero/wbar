@@ -13,12 +13,10 @@ use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
 use crate::appbar::{AppBar, Edge};
-use crate::config::Config;
+use crate::config::{BarPosition, Config};
 use crate::glazewm::GlazewmClient;
 use crate::hotreload::HotReload;
 use crate::widgets::Widgets;
-
-const BAR_HEIGHT: f32 = 32.0;
 
 fn main() -> eframe::Result {
     tracing_subscriber::fmt()
@@ -46,7 +44,7 @@ fn main() -> eframe::Result {
         .with_transparent(false)
         .with_always_on_top()
         .with_taskbar(false)
-        .with_inner_size([800.0, BAR_HEIGHT])
+        .with_inner_size([800.0, cfg.bar.height])
         .with_position([0.0, 0.0]);
 
     let options = eframe::NativeOptions {
@@ -100,15 +98,22 @@ impl WbarApp {
         }
     }
 
+    fn edge(&self) -> Edge {
+        match self.cfg.bar.position {
+            BarPosition::Top => Edge::Top,
+            BarPosition::Bottom => Edge::Bottom,
+        }
+    }
+
     /// Register the bar with the Windows shell once the window has an HWND.
     /// SetWindowPos inside register() also moves the window to the rect the
-    /// shell allocated, so this takes over from `pin_to_top` once it succeeds.
+    /// shell allocated, so this takes over from `pin_to_edge` once it succeeds.
     fn register_appbar(&mut self, frame: &eframe::Frame) {
         if self.appbar.is_some() {
             return;
         }
-        let edge = Edge::Top;
-        let height = BAR_HEIGHT as i32;
+        let edge = self.edge();
+        let height = self.cfg.bar.height as i32;
         self.appbar = appbar::register(frame, edge, height);
     }
 
@@ -126,13 +131,22 @@ impl WbarApp {
             let radius = cfg.effective_tokens().radius_sm;
             theme::apply(ctx, &palette, theme::is_dark(cfg.theme));
             self.widgets = Widgets::from_config(&cfg, &palette, radius, &self.glazewm);
+
+            let position_changed = cfg.bar.position != self.cfg.bar.position
+                || (cfg.bar.height - self.cfg.bar.height).abs() > f32::EPSILON;
             self.cfg = cfg;
+            if position_changed {
+                // Force re-pin and re-register; dropping the old AppBar issues
+                // ABM_REMOVE before the next register's ABM_NEW.
+                self.appbar = None;
+                self.pinned = false;
+            }
         }
     }
 
-    /// On the first frame the OS has reported the primary monitor size, so we
-    /// stretch the window to the full monitor width and snap it to the top edge.
-    fn pin_to_top(&mut self, ctx: &egui::Context) {
+    /// On the first frame the OS reports a monitor size, stretch the window to
+    /// full monitor width at the configured edge.
+    fn pin_to_edge(&mut self, ctx: &egui::Context) {
         if self.pinned {
             return;
         }
@@ -140,15 +154,21 @@ impl WbarApp {
         let Some(monitor_size) = monitor_size else {
             return;
         };
+        let height = self.cfg.bar.height;
+        let y = match self.cfg.bar.position {
+            BarPosition::Top => 0.0,
+            BarPosition::Bottom => monitor_size.y - height,
+        };
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
             monitor_size.x,
-            BAR_HEIGHT,
+            height,
         )));
-        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, y)));
         tracing::info!(
+            position = ?self.cfg.bar.position,
             width = monitor_size.x,
-            height = BAR_HEIGHT,
-            "pinned bar to top"
+            height,
+            "pinned bar"
         );
         self.pinned = true;
     }
@@ -157,11 +177,17 @@ impl WbarApp {
 impl eframe::App for WbarApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.drain_reloads(ctx);
-        self.pin_to_top(ctx);
+        self.pin_to_edge(ctx);
         self.register_appbar(frame);
         egui::CentralPanel::default().show(ctx, |ui| {
             self.draw_regions(ui);
         });
+    }
+}
+
+impl WbarApp {
+    fn bar_height(&self) -> f32 {
+        self.cfg.bar.height
     }
 }
 
@@ -171,7 +197,7 @@ impl WbarApp {
             let third = ui.available_width() / 3.0;
 
             ui.allocate_ui_with_layout(
-                egui::vec2(third, BAR_HEIGHT),
+                egui::vec2(third, self.bar_height()),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     for id in self.cfg.layout.left.clone() {
@@ -181,7 +207,7 @@ impl WbarApp {
             );
 
             ui.allocate_ui_with_layout(
-                egui::vec2(third, BAR_HEIGHT),
+                egui::vec2(third, self.bar_height()),
                 egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                 |ui| {
                     for id in self.cfg.layout.center.clone() {
@@ -191,7 +217,7 @@ impl WbarApp {
             );
 
             ui.allocate_ui_with_layout(
-                egui::vec2(third, BAR_HEIGHT),
+                egui::vec2(third, self.bar_height()),
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
                     for id in self.cfg.layout.right.clone() {
