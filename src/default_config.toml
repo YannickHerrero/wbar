@@ -3,18 +3,20 @@
 
 [bar]
 position = "top"
-height = 32
+height = 28
 
 [font]
 family = "Default"
-size = 13.0
+size = 12.0
 
 theme = "Paper"
 
 [layout]
 left = ["workspaces"]
 center = ["clock"]
-right = ["cpu", "ram"]
+# The right region renders right-to-left: the first id ends up rightmost.
+# Reading the visual order left-to-right this is: memory, cpu, battery.
+right = ["battery", "cpu", "memory"]
 
 [widgets.workspaces]
 type = "glazewm"
@@ -22,17 +24,31 @@ show_empty = false
 
 [widgets.clock]
 type = "clock"
-format = "%a %d %b  %H:%M"
+# %a %-d %b %-I:%M %p  →  "Mon 3 Jan 2:30 PM" — matches zebar's "EEE d MMM t".
+format = "%a %-d %b %-I:%M %p"
 tick_seconds = 1
+
+[widgets.memory]
+type = "sysinfo"
+metric = "ram"
+# nf-fa-microchip (Nerd Font: Font Awesome)
+icon = ""
+format = "{value:.0}%"
+interval_seconds = 2
 
 [widgets.cpu]
 type = "sysinfo"
 metric = "cpu"
-format = "CPU {value:>3.0}%"
+# nf-oct-cpu (Nerd Font: Octicons)
+icon = ""
+format = "{value:.0}%"
 interval_seconds = 2
+warn_above = 85.0
 
-[widgets.ram]
+[widgets.battery]
 type = "sysinfo"
-metric = "ram"
-format = "RAM {used_gb:.1}/{total_gb:.1}G"
-interval_seconds = 2
+metric = "battery"
+# nf-fa-battery_full (Nerd Font: Font Awesome)
+icon = ""
+format = "{value:.0}%"
+interval_seconds = 10

@@ -36,12 +36,16 @@ Override any individual colour via the optional `[palette]` table (hex strings),
 
 ## Widgets
 
-- `glazewm` — workspace indicators, focused workspace highlighted
+- `glazewm` — workspace indicators, focused workspace highlighted (hidden when glazewm isn't running)
 - `clock` — formatted local time (chrono strftime)
-- `sysinfo` — CPU usage, RAM, or network throughput (rx/tx)
+- `sysinfo` — CPU usage, RAM, network throughput (rx/tx), or battery level. Optional `icon` glyph rendered before the value; optional `warn_above` + `warn_color` flip the label to a warn colour above a threshold (default `palette.error`).
 - `command` — run an arbitrary shell command on an interval, show its stdout
 
 Each widget is display-only in v1 — no click interactions.
+
+## Icons
+
+If a Nerd-Font-patched file (Symbols, JetBrainsMono, Iosevka, FiraCode, or Hack — Mono variants preferred) is found in `%LOCALAPPDATA%\Microsoft\Windows\Fonts` or `%WINDIR%\Fonts`, it's registered as a fallback in egui's monospace family, so any glyph from the Nerd Font Private Use Area you embed in a widget's `icon` or `format` string renders correctly. See the [Nerd Fonts cheat sheet](https://www.nerdfonts.com/cheat-sheet) for codepoints. No font is bundled — install one separately if you want icon support.
 
 ## How it integrates with Windows
 
