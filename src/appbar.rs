@@ -41,7 +41,9 @@ mod imp {
         SHAppBarMessage,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos,
+        GWL_EXSTYLE, GetSystemMetrics, GetWindowLongPtrW, SM_CXSCREEN, SM_CYSCREEN,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
+        WS_EX_TOOLWINDOW,
     };
 
     pub struct AppBar {
@@ -51,8 +53,18 @@ mod imp {
     impl AppBar {
         pub fn try_register(frame: &Frame, edge: Edge, height: i32, waker: &Waker) -> Option<Self> {
             let hwnd = hwnd_from_frame(frame)?;
-            // SAFETY: SHAppBarMessage and SetWindowPos take a valid HWND owned
-            // by this process. We just got it from the live eframe viewport.
+            // Mark the bar as a Win32 tool window *before* AppBar
+            // registration. This excludes it from the taskbar, from
+            // Alt+Tab, and — crucially — from tiling window managers
+            // like GlazeWM which key off the standard "is this a
+            // managed app?" Win32 hints to decide what to lay out.
+            // Without this, GlazeWM treats wbar as just another app
+            // and tries to tile it into the centre of the screen.
+            // SAFETY: hwnd is a live window we just received from the
+            // eframe viewport in this process.
+            unsafe { mark_as_toolwindow(hwnd) };
+            // SAFETY: SHAppBarMessage and SetWindowPos take a valid HWND
+            // owned by this process.
             let appbar = unsafe { do_register(hwnd, edge, height) }?;
             // Arm the cross-thread waker now that we know the HWND.
             // Background threads (tray handler, IPC, glazewm reconnect)
@@ -61,6 +73,39 @@ mod imp {
             waker.set_hwnd(hwnd.0 as isize);
             Some(appbar)
         }
+    }
+
+    /// Add `WS_EX_TOOLWINDOW` to the bar's extended window styles. This is
+    /// the canonical "I'm a dock/utility window, not a regular app" hint
+    /// that taskbars, Alt+Tab handlers, and tiling window managers all
+    /// look at. egui's `with_taskbar(false)` only calls
+    /// `ITaskbarList::DeleteTab` which removes the taskbar entry but
+    /// leaves the window otherwise indistinguishable from a normal app.
+    ///
+    /// SAFETY: caller guarantees `hwnd` is a live, owned window.
+    unsafe fn mark_as_toolwindow(hwnd: HWND) {
+        let current = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+        let new = current | (WS_EX_TOOLWINDOW.0 as isize);
+        if current == new {
+            return;
+        }
+        unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new) };
+        // SetWindowLongPtrW takes effect on the next SetWindowPos with
+        // SWP_FRAMECHANGED. Force it now so the change is visible to
+        // the shell immediately (do_register's SetWindowPos that
+        // follows doesn't carry SWP_FRAMECHANGED).
+        let _ = unsafe {
+            SetWindowPos(
+                hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        };
+        tracing::info!("marked bar HWND as WS_EX_TOOLWINDOW");
     }
 
     impl Drop for AppBar {
