@@ -217,6 +217,23 @@ pub enum WidgetConfig {
     Clock(ClockConfig),
     Sysinfo(SysinfoConfig),
     Command(CommandConfig),
+    Spacer(SpacerConfig),
+}
+
+/// Inserts horizontal blank space between adjacent widgets in a region.
+/// Use when REGION_ITEM_SPACING is too small for a specific gap (e.g.
+/// you want a wider gap between the tiling-direction pill and the
+/// workspaces row).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpacerConfig {
+    pub width: f32,
+}
+
+impl Default for SpacerConfig {
+    fn default() -> Self {
+        Self { width: 8.0 }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

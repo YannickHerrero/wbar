@@ -8,6 +8,7 @@ use crate::theme::Palette;
 
 mod clock;
 mod command;
+mod spacer;
 mod sysinfo;
 mod tiling_direction;
 mod workspaces;
@@ -70,5 +71,6 @@ fn build(
         WidgetConfig::TilingDirection(c) => Box::new(
             tiling_direction::TilingDirectionWidget::new(c.clone(), glazewm.clone(), palette, radius),
         ),
+        WidgetConfig::Spacer(c) => Box::new(spacer::SpacerWidget::new(c.clone())),
     }
 }
