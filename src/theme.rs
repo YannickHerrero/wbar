@@ -166,6 +166,23 @@ pub fn apply_font_size(ctx: &Context, body_size: f32) {
 }
 
 pub fn apply(ctx: &Context, palette: &Palette, dark: bool) {
+    // Pin the theme preference to a fixed Light/Dark so a later
+    // WM_SETTINGCHANGE (e.g. from wmenu's ecosystem theme orchestrator
+    // touching the Personalize dark/light registry) can't swap egui's
+    // active Style out from under us. set_visuals only updates the
+    // currently active Style; if egui were free to flip to the other,
+    // it would render with the unmodified default visuals — and our
+    // palette overrides on the bar background / sysinfo text would
+    // vanish ~300ms after the switch, leaving widget pills (cached
+    // colours at construction time) as the only correctly-themed
+    // elements. Pinning here makes the active Style stable.
+    use eframe::egui::ThemePreference;
+    ctx.set_theme(if dark {
+        ThemePreference::Dark
+    } else {
+        ThemePreference::Light
+    });
+
     let p = palette;
     let mut v = if dark {
         Visuals::dark()
