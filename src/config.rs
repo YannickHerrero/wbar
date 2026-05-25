@@ -239,8 +239,8 @@ pub struct TilingDirectionConfig {
 impl Default for TilingDirectionConfig {
     fn default() -> Self {
         Self {
-            horizontal: "═".into(),
-            vertical: "║".into(),
+            horizontal: "-".into(),
+            vertical: "|".into(),
         }
     }
 }
