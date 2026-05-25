@@ -68,7 +68,7 @@ fn build(
             radius,
         )),
         WidgetConfig::TilingDirection(c) => Box::new(
-            tiling_direction::TilingDirectionWidget::new(c.clone(), glazewm.clone()),
+            tiling_direction::TilingDirectionWidget::new(c.clone(), glazewm.clone(), palette, radius),
         ),
     }
 }
