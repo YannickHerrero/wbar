@@ -5,6 +5,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 use super::Widget;
 use crate::config::CommandConfig;
@@ -13,6 +15,13 @@ use crate::config::CommandConfig;
 const SHELL: (&str, &str) = ("cmd", "/C");
 #[cfg(not(windows))]
 const SHELL: (&str, &str) = ("sh", "-c");
+
+/// Win32 CreateProcess flag: don't allocate a console for the child. Without
+/// this, every poll of a command widget flashes a fresh cmd window on screen
+/// (wbar runs as a GUI process with no console of its own, so the OS spins up
+/// a new one for the cmd child by default).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Runs an arbitrary shell command on an interval in a background thread and
 /// displays the trimmed first line of stdout. Spawning in a thread keeps the
@@ -60,7 +69,11 @@ impl CommandWidget {
         let ctx = ctx.clone();
 
         std::thread::spawn(move || {
-            let output = Command::new(SHELL.0).arg(SHELL.1).arg(&command).output();
+            let mut cmd = Command::new(SHELL.0);
+            cmd.arg(SHELL.1).arg(&command);
+            #[cfg(windows)]
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            let output = cmd.output();
             let text = match output {
                 Ok(o) => {
                     let stdout = String::from_utf8_lossy(&o.stdout);
