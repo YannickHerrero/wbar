@@ -69,7 +69,7 @@ theme = "Paper"
 
 # Which widgets go in which region. Each id references a [widgets.<id>] table.
 [layout]
-left   = ["workspaces"]
+left   = ["tiling", "gap", "workspaces"]
 center = ["clock"]
 # Right region renders right-to-left: the first id is rightmost on screen.
 right  = ["battery", "cpu", "memory"]
@@ -77,6 +77,13 @@ right  = ["battery", "cpu", "memory"]
 [widgets.workspaces]
 type = "glazewm"
 show_empty = false
+
+[widgets.tiling]
+type = "tiling-direction"   # '-' or '|' indicating GlazeWM split direction
+
+[widgets.gap]
+type = "spacer"             # blank horizontal space between adjacent widgets
+width = 8
 
 [widgets.clock]
 type = "clock"
@@ -120,6 +127,30 @@ show_empty = false
 ```
 
 Pills for each workspace from GlazeWM, focused one highlighted with `palette.accent`. Connects to `ws://127.0.0.1:6123` and reconnects with exponential backoff. **Hidden entirely** when GlazeWM isn't running.
+
+### `tiling-direction` — current GlazeWM split direction
+
+```toml
+[widgets.tiling]
+type = "tiling-direction"
+# Defaults are '|' (horizontal split → vertical separator) and '-'
+# (vertical split → horizontal separator). Override below if you'd
+# rather use box-drawing or a Nerd-Font glyph:
+# horizontal = "═"
+# vertical   = "║"
+```
+
+Renders a single glyph inside an inactive-style pill, switching live whenever GlazeWM emits `tiling_direction_changed` or a focus change moves you into a container with a different direction. Event-driven (no polling). **Hidden entirely** when GlazeWM isn't running.
+
+### `spacer` — blank horizontal space
+
+```toml
+[widgets.gap]
+type = "spacer"
+width = 8           # pixels along the region's main axis (default 8)
+```
+
+Inserts blank space between adjacent widgets in a region. Works in `left_to_right` and `right_to_left` regions equally — egui flows `add_space` in the parent's main direction. Use this when the global 4 px between-widget spacing feels too tight for a specific gap.
 
 ### `clock` — formatted time
 
