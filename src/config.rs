@@ -213,6 +213,7 @@ pub struct LayoutConfig {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum WidgetConfig {
     Glazewm(WorkspacesConfig),
+    TilingDirection(TilingDirectionConfig),
     Clock(ClockConfig),
     Sysinfo(SysinfoConfig),
     Command(CommandConfig),
@@ -222,6 +223,26 @@ pub enum WidgetConfig {
 #[serde(default)]
 pub struct WorkspacesConfig {
     pub show_empty: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TilingDirectionConfig {
+    /// Glyph shown when the focused container's tiling direction is
+    /// `horizontal` (next window placed side-by-side).
+    pub horizontal: String,
+    /// Glyph shown when the focused container's tiling direction is
+    /// `vertical` (next window placed below).
+    pub vertical: String,
+}
+
+impl Default for TilingDirectionConfig {
+    fn default() -> Self {
+        Self {
+            horizontal: "═".into(),
+            vertical: "║".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

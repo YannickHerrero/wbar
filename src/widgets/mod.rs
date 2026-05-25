@@ -9,6 +9,7 @@ use crate::theme::Palette;
 mod clock;
 mod command;
 mod sysinfo;
+mod tiling_direction;
 mod workspaces;
 
 pub trait Widget {
@@ -66,5 +67,8 @@ fn build(
             palette,
             radius,
         )),
+        WidgetConfig::TilingDirection(c) => Box::new(
+            tiling_direction::TilingDirectionWidget::new(c.clone(), glazewm.clone()),
+        ),
     }
 }
