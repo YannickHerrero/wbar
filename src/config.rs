@@ -53,7 +53,22 @@ impl Config {
                 .with_context(|| format!("creating config dir at {}", parent.display()))?;
         }
         let text = toml::to_string_pretty(self).context("serialising config")?;
-        fs::write(path, text).with_context(|| format!("writing config at {}", path.display()))?;
+
+        // Atomic write: stage to a sibling temp file then rename over the
+        // target. Naïve fs::write opens the target in truncate mode, so for
+        // a few microseconds the file exists but is empty. The directory
+        // watcher in hotreload.rs notifies on that intermediate state, the
+        // handler reads "", toml::from_str happily produces a Config with
+        // all #[serde(default)] fields (theme=Paper, widgets={}), and the
+        // bar repaints in that ghost state for a frame before the second
+        // event arrives with the real content. Renaming a fully-written
+        // temp file is atomic on NTFS and emits only one observable event.
+        let tmp = path.with_extension("toml.tmp");
+        fs::write(&tmp, &text)
+            .with_context(|| format!("writing temp config at {}", tmp.display()))?;
+        fs::rename(&tmp, path).with_context(|| {
+            format!("renaming {} -> {}", tmp.display(), path.display())
+        })?;
         tracing::info!(path = %path.display(), "config saved");
         Ok(())
     }
