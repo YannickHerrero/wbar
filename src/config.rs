@@ -238,9 +238,14 @@ pub struct TilingDirectionConfig {
 
 impl Default for TilingDirectionConfig {
     fn default() -> Self {
+        // The glyph represents the separator line that the next window will
+        // be placed against — not the axis of arrangement. Horizontal
+        // tiling-direction places the next window side-by-side, so the
+        // separator is a vertical bar ("|"); vertical tiling places below,
+        // so the separator is a horizontal bar ("-").
         Self {
-            horizontal: "-".into(),
-            vertical: "|".into(),
+            horizontal: "|".into(),
+            vertical: "-".into(),
         }
     }
 }
