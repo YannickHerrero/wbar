@@ -25,15 +25,24 @@ const GLAZEWM_WS_URL: &str = "ws://127.0.0.1:6123";
 
 const SUBSCRIBE_CMD: &str = concat!(
     "sub -e workspace_activated workspace_deactivated workspace_updated ",
-    "focused_container_moved focus_changed",
+    "focused_container_moved focus_changed tiling_direction_changed",
 );
 const QUERY_WORKSPACES_CMD: &str = "query workspaces";
+const QUERY_TILING_DIRECTION_CMD: &str = "query tiling-direction";
 
 /// What widgets see. Cheap to clone — small Vec of small structs.
 #[derive(Debug, Default, Clone)]
 pub struct WorkspaceState {
     pub workspaces: Vec<WorkspaceInfo>,
+    pub tiling_direction: Option<TilingDirection>,
     pub connected: bool,
+}
+
+/// Direction in which the focused container will place a new tiling window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TilingDirection {
+    Horizontal,
+    Vertical,
 }
 
 #[derive(Debug, Clone)]
@@ -140,6 +149,7 @@ fn session(ctx: &egui::Context, waker: &Waker, state: &Arc<RwLock<WorkspaceState
 
     socket.send(Message::text(SUBSCRIBE_CMD))?;
     socket.send(Message::text(QUERY_WORKSPACES_CMD))?;
+    socket.send(Message::text(QUERY_TILING_DIRECTION_CMD))?;
 
     loop {
         match socket.read()? {
@@ -171,23 +181,43 @@ fn handle_text(
 
     match envelope.message_type.as_deref() {
         Some("client_response") => {
+            let mut changed = false;
             if let Some(ws_list) = extract_workspaces(&envelope.data) {
-                update_state(state, ws_list);
+                update_workspaces(state, ws_list);
+                changed = true;
+            }
+            if let Some(dir) = extract_tiling_direction(&envelope.data) {
+                update_tiling_direction(state, Some(dir));
+                changed = true;
+            }
+            if changed {
                 ctx.request_repaint();
                 waker.wake();
             }
         }
         Some("event_subscription") => {
+            // Any subscribed event might change either workspace state or
+            // the tiling direction (focus moves can change the parent's
+            // direction). Re-issue both queries; the responses come back as
+            // client_response messages handled above.
             socket.send(Message::text(QUERY_WORKSPACES_CMD))?;
+            socket.send(Message::text(QUERY_TILING_DIRECTION_CMD))?;
         }
         _ => {}
     }
     Ok(())
 }
 
-fn update_state(state: &Arc<RwLock<WorkspaceState>>, new_list: Vec<WorkspaceInfo>) {
+fn update_workspaces(state: &Arc<RwLock<WorkspaceState>>, new_list: Vec<WorkspaceInfo>) {
     if let Ok(mut s) = state.write() {
         s.workspaces = new_list;
+        s.connected = true;
+    }
+}
+
+fn update_tiling_direction(state: &Arc<RwLock<WorkspaceState>>, dir: Option<TilingDirection>) {
+    if let Ok(mut s) = state.write() {
+        s.tiling_direction = dir;
         s.connected = true;
     }
 }
@@ -245,4 +275,13 @@ fn extract_workspaces(data: &Option<serde_json::Value>) -> Option<Vec<WorkspaceI
             })
             .collect(),
     )
+}
+
+fn extract_tiling_direction(data: &Option<serde_json::Value>) -> Option<TilingDirection> {
+    let s = data.as_ref()?.get("tilingDirection")?.as_str()?;
+    match s {
+        "horizontal" => Some(TilingDirection::Horizontal),
+        "vertical" => Some(TilingDirection::Vertical),
+        _ => None,
+    }
 }
