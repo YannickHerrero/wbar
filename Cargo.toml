@@ -23,9 +23,13 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tungstenite = { version = "0.29.0", default-features = false, features = ["handshake"] }
 
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+# tray-icon routes to NSStatusBar on macOS and Shell_NotifyIcon on Windows.
+# Linux backend would drag in GTK so we don't list it for other targets.
+tray-icon = { version = "0.24.0", default-features = false }
+
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-tray-icon = { version = "0.24.0", default-features = false }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
