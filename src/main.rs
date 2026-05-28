@@ -186,7 +186,6 @@ fn screen_insets_top_bottom() -> (f32, f32) {
     #[cfg(target_os = "macos")]
     {
         use objc2_app_kit::NSScreen;
-        use objc2_foundation::{NSUserDefaults, ns_string};
         let Some(mtm) = objc2::MainThreadMarker::new() else {
             return (0.0, 0.0);
         };
@@ -196,30 +195,21 @@ fn screen_insets_top_bottom() -> (f32, f32) {
         let frame = screen.frame();
         let visible = screen.visibleFrame();
 
-        // _HIHideMenuBar is set by "Automatically hide and show the menu
-        // bar" in System Settings. When on, visibleFrame still reports an
-        // inset for the (currently hidden) menu bar slab — but the user
-        // clearly wants the top edge usable, so skip the menu-bar inset
-        // in that case and let the bar sit where the menu bar would.
-        let defaults = NSUserDefaults::standardUserDefaults();
-        let menu_bar_autohides = defaults.boolForKey(ns_string!("_HIHideMenuBar"));
-
-        // macOS coords: bottom-left origin, Y up. Menu bar is the slab
-        // missing from the *top* of visibleFrame; Dock (when at the
-        // bottom) is the slab missing from the *bottom*.
-        let menu_bar = if menu_bar_autohides {
-            0.0
-        } else {
-            (frame.origin.y + frame.size.height) - (visible.origin.y + visible.size.height)
-        };
-        let dock_bottom = visible.origin.y - frame.origin.y;
-        tracing::debug!(
-            menu_bar_autohides,
-            menu_bar,
-            dock_bottom,
-            "macOS screen insets"
-        );
-        (menu_bar.max(0.0) as f32, dock_bottom.max(0.0) as f32)
+        // Top inset is forced to 0 on macOS: anyone running a custom
+        // top-edge status bar wants the top edge, not "below the menu
+        // bar". This intentionally overlaps a permanent menu bar (use
+        // System Settings → Control Center → Menu Bar to auto-hide it)
+        // and intentionally puts the bar's middle behind the notch on
+        // notch Macs (NSScreen.visibleFrame still reports a notch-sized
+        // inset there even when auto-hide is enabled, so honouring it
+        // would leave the bar parked uselessly below the notch).
+        //
+        // Bottom inset still honours the Dock: a bottom-positioned bar
+        // sitting underneath the Dock would be unreachable, with no
+        // reasonable user workaround.
+        let dock_bottom = (visible.origin.y - frame.origin.y).max(0.0) as f32;
+        tracing::debug!(dock_bottom, "macOS screen insets (top forced to 0)");
+        (0.0, dock_bottom)
     }
     #[cfg(not(target_os = "macos"))]
     {
