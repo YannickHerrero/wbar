@@ -33,7 +33,18 @@ Single binary, no webview, no build pipeline — just one TOML config file, a ha
 
 ## Install
 
+### Windows
+
 Grab `wbar.exe` from the [latest release](https://github.com/yannickherrero/wbar/releases) and drop it anywhere on your PATH (or somewhere convenient like `%USERPROFILE%\Documents\apps\`).
+
+### macOS
+
+Grab `wbar-macos` from the [latest release](https://github.com/yannickherrero/wbar/releases) (it's a universal binary — works on both Apple Silicon and Intel), then:
+
+```bash
+chmod +x wbar-macos
+mv wbar-macos /usr/local/bin/wbar      # or ~/.local/bin/wbar
+```
 
 Or build from source — see [Building from source](#building-from-source).
 
@@ -42,16 +53,27 @@ Or build from source — see [Building from source](#building-from-source).
 Just run the binary:
 
 ```powershell
-wbar.exe
+wbar.exe                # Windows
 ```
 
-The bar appears at the top of your primary monitor and registers as a Windows AppBar so maximised windows stop short of it.
+```bash
+wbar                    # macOS
+```
 
-First run with no config writes the embedded default at `%APPDATA%\wbar\config.toml` style defaults (you'll only need to create the file if you want to change something).
+The bar appears at the top of your primary monitor. On Windows it registers as an AppBar so maximised windows stop short of it; on macOS it floats above other windows just below the system menu bar (macOS has no AppBar-equivalent shell API).
+
+First run with no config uses the embedded defaults (you'll only need to create the config file if you want to change something).
 
 ## Configuration
 
-wbar reads `%APPDATA%\wbar\config.toml`. If the file doesn't exist, an embedded default is used. Edit and save the config — the bar restyles live, no restart needed. Changes to `bar.position` / `bar.height` re-register the Windows AppBar transparently.
+wbar reads from your platform's config directory:
+
+| platform | path                                              |
+|----------|---------------------------------------------------|
+| Windows  | `%APPDATA%\wbar\config.toml`                       |
+| macOS    | `~/Library/Application Support/wbar/config.toml`   |
+
+If the file doesn't exist, an embedded default is used. Edit and save the config — the bar restyles live, no restart needed. Changes to `bar.position` / `bar.height` re-register the Windows AppBar transparently; on macOS they re-pin the bar to the new edge.
 
 Annotated example ([`examples/config.toml`](examples/config.toml)):
 
@@ -197,7 +219,7 @@ command = "curl -s wttr.in/?format=3"
 interval_seconds = 600
 ```
 
-Runs the command in a background thread on the configured interval and shows the trimmed first line of stdout. Wrapped with `cmd /C` on Windows.
+Runs the command in a background thread on the configured interval and shows the trimmed first line of stdout. Wrapped with `cmd /C` on Windows and `sh -c` on macOS.
 
 ## Themes
 
@@ -239,7 +261,12 @@ font_body = 14.0
 
 ## Nerd Font icons
 
-wbar scans `%LOCALAPPDATA%\Microsoft\Windows\Fonts` and `%WINDIR%\Fonts` at startup for a Nerd-Font-patched file (Symbols, JetBrainsMono, Iosevka, FiraCode, Hack — Mono variants preferred). The first hit is registered as a fallback in egui's monospace family, so any Nerd-Font glyph you embed in a widget's `icon` or `format` string renders correctly.
+wbar scans the system font directories at startup for a Nerd-Font-patched file (Symbols, JetBrainsMono, Iosevka, FiraCode, Hack — Mono variants preferred). The first hit is registered as a fallback in egui's monospace family, so any Nerd-Font glyph you embed in a widget's `icon` or `format` string renders correctly.
+
+| platform | directories scanned (in order)                                                                  |
+|----------|-------------------------------------------------------------------------------------------------|
+| Windows  | `%LOCALAPPDATA%\Microsoft\Windows\Fonts`, `%WINDIR%\Fonts`                                       |
+| macOS    | `~/Library/Fonts`, `/Library/Fonts`, `/System/Library/Fonts`                                     |
 
 If a **SemiBold / Medium / Bold** variant of the same family is also present, it's used as the body font so all bar text renders heavier.
 
@@ -282,21 +309,30 @@ Hiding releases the AppBar reservation so other maximised windows reflow up to f
 
 ## Building from source
 
-Requires Rust stable + (on WSL) `mingw-w64`:
+Requires Rust stable. The Makefile detects the host platform via `uname -s` and picks the right target / install path.
+
+### Windows (cross-compile from WSL)
 
 ```bash
-sudo apt install -y mingw-w64        # on WSL/Linux for cross-compiling
+sudo apt install -y mingw-w64        # cross-compile prerequisite
 make build                            # cargo build --release --target x86_64-pc-windows-gnu
 make install                          # copies wbar.exe to %USERPROFILE%\Documents\apps\
 ```
 
-Targets and Make goals:
+### macOS (native)
+
+```bash
+make build                            # cargo build --release for your host arch
+make install                          # kills any running wbar then copies to ~/.local/bin
+```
+
+Targets and Make goals (identical on both platforms):
 
 | goal        | what it does                                                       |
 |-------------|--------------------------------------------------------------------|
-| `make build`   | release build for `x86_64-pc-windows-gnu`                       |
-| `make install` | build + kill any running `wbar.exe` + copy to install dir       |
-| `make kill`    | taskkill any running `wbar.exe`                                 |
+| `make build`   | release build for the host target                               |
+| `make install` | build + kill any running wbar + copy to install dir             |
+| `make kill`    | terminate any running wbar (taskkill / pkill)                   |
 | `make clean`   | `cargo clean`                                                   |
 | `make deploy`  | bump version, tag, push — triggers the GitHub release workflow  |
 
