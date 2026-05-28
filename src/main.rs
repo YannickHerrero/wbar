@@ -299,13 +299,13 @@ fn handle_cli() -> Option<i32> {
 
 #[allow(clippy::print_stdout, clippy::print_stderr)]
 fn print_usage(prog: &str) {
-    eprintln!("wbar — minimalist status bar for Windows + GlazeWM");
+    eprintln!("wbar — minimalist status bar for Windows and macOS + GlazeWM");
     eprintln!();
     eprintln!("usage:");
     eprintln!("  {prog}                     Run the bar (no arguments)");
     eprintln!("  {prog} toggle              Show/hide the bar");
     eprintln!("  {prog} show                Show the bar");
-    eprintln!("  {prog} hide                Hide the bar (releases the AppBar reservation)");
+    eprintln!("  {prog} hide                Hide the bar (releases the AppBar reservation on Windows)");
     eprintln!("  {prog} quit                Exit the running bar");
     eprintln!("  {prog} set-theme <name>    Switch theme (Paper|Stone|Sage|Clay|Ink)");
     eprintln!("  {prog} --help              Show this message");
