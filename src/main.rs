@@ -186,6 +186,7 @@ fn screen_insets_top_bottom() -> (f32, f32) {
     #[cfg(target_os = "macos")]
     {
         use objc2_app_kit::NSScreen;
+        use objc2_foundation::{NSUserDefaults, ns_string};
         let Some(mtm) = objc2::MainThreadMarker::new() else {
             return (0.0, 0.0);
         };
@@ -194,12 +195,30 @@ fn screen_insets_top_bottom() -> (f32, f32) {
         };
         let frame = screen.frame();
         let visible = screen.visibleFrame();
+
+        // _HIHideMenuBar is set by "Automatically hide and show the menu
+        // bar" in System Settings. When on, visibleFrame still reports an
+        // inset for the (currently hidden) menu bar slab — but the user
+        // clearly wants the top edge usable, so skip the menu-bar inset
+        // in that case and let the bar sit where the menu bar would.
+        let defaults = NSUserDefaults::standardUserDefaults();
+        let menu_bar_autohides = defaults.boolForKey(ns_string!("_HIHideMenuBar"));
+
         // macOS coords: bottom-left origin, Y up. Menu bar is the slab
         // missing from the *top* of visibleFrame; Dock (when at the
         // bottom) is the slab missing from the *bottom*.
-        let menu_bar =
-            (frame.origin.y + frame.size.height) - (visible.origin.y + visible.size.height);
+        let menu_bar = if menu_bar_autohides {
+            0.0
+        } else {
+            (frame.origin.y + frame.size.height) - (visible.origin.y + visible.size.height)
+        };
         let dock_bottom = visible.origin.y - frame.origin.y;
+        tracing::debug!(
+            menu_bar_autohides,
+            menu_bar,
+            dock_bottom,
+            "macOS screen insets"
+        );
         (menu_bar.max(0.0) as f32, dock_bottom.max(0.0) as f32)
     }
     #[cfg(not(target_os = "macos"))]
