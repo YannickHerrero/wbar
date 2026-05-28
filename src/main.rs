@@ -1,6 +1,11 @@
 // Release builds run as a Windows GUI app (no console window). Debug builds
 // stay on the console subsystem so `cargo run` still shows tracing output.
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// The attribute is a no-op on non-Windows targets but gating it avoids a
+// "unknown attribute" lint when cross-compiling.
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 mod appbar;
 // Several Palette fields and Tokens are consumed by widgets in later commits.
