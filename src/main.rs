@@ -174,6 +174,49 @@ fn set_macos_accessory_policy() {
 #[cfg(not(target_os = "macos"))]
 fn set_macos_accessory_policy() {}
 
+/// Promote our NSWindow above the system menu bar (and the notch area
+/// on notch Macs) so Cocoa's `constrainFrameRect:` doesn't push our
+/// requested y=0 down below the menu bar. Returns true once the level
+/// has been applied; false until the NSView is available (the first
+/// frame or two), in which case the caller should try again next
+/// update. No-op (returns true) on non-macOS.
+#[cfg(target_os = "macos")]
+fn promote_macos_window_above_menubar(frame: &eframe::Frame) -> bool {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = frame.window_handle() else {
+        return false;
+    };
+    let RawWindowHandle::AppKit(h) = handle.as_raw() else {
+        return false;
+    };
+    let ns_view: *mut AnyObject = h.ns_view.as_ptr().cast();
+    // SAFETY: ns_view is a live NSView we just received via
+    // raw-window-handle from the eframe viewport.
+    let ns_window: *mut AnyObject = unsafe { msg_send![ns_view, window] };
+    if ns_window.is_null() {
+        return false;
+    }
+    // NSStatusWindowLevel = 25, one above NSMainMenuWindowLevel (24).
+    // Cocoa's constrainFrameRect: only kicks in for windows at or below
+    // the menu-bar level; at status level our requested y=0 is honoured,
+    // putting the bar flush with the top edge of the screen (and on
+    // notch Macs, with the centre region tucked behind the notch).
+    const NS_STATUS_WINDOW_LEVEL: isize = 25;
+    // SAFETY: ns_window is the live NSWindow attached to the NSView
+    // above. setLevel: takes an NSInteger and has no aliasing rules.
+    let _: () = unsafe { msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL] };
+    tracing::info!("promoted NSWindow to NSStatusWindowLevel for top-edge overlap");
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+fn promote_macos_window_above_menubar(_frame: &eframe::Frame) -> bool {
+    true
+}
+
 /// Return (top_inset, bottom_inset) in logical points for the main
 /// screen. On macOS this is the system menu-bar height at the top and
 /// the Dock height at the bottom (when the Dock is positioned at the
@@ -341,6 +384,10 @@ struct WbarApp {
     /// Cross-thread waker passed to appbar::register so background
     /// subsystems can wake the eframe main loop via InvalidateRect.
     waker: Waker,
+    /// Whether the macOS NSWindow level has been bumped above the menu
+    /// bar yet. False until the NSView is reachable via raw-window-
+    /// handle (typically the first frame). Stays false on non-macOS.
+    macos_window_promoted: bool,
 }
 
 impl WbarApp {
@@ -369,6 +416,7 @@ impl WbarApp {
             tray,
             ipc_rx,
             waker,
+            macos_window_promoted: false,
         }
     }
 
@@ -571,6 +619,14 @@ impl eframe::App for WbarApp {
             // already invisible and the AppBar reservation released. IPC
             // can still wake us up to flip back to visible.
             return;
+        }
+        // macOS: bump the NSWindow level above the menu bar BEFORE
+        // pinning so the new position isn't constrained back below it.
+        // A successful promotion forces a re-pin in case the prior
+        // (constrained) pin already happened.
+        if !self.macos_window_promoted && promote_macos_window_above_menubar(frame) {
+            self.macos_window_promoted = true;
+            self.pinned = false;
         }
         self.pin_to_edge(ctx);
         self.register_appbar(frame);

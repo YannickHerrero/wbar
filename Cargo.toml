@@ -37,6 +37,7 @@ tray-icon = { version = "0.24.0", default-features = false }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSResponder", "NSRunningApplication", "NSScreen"] }
 objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSArray", "NSEnumerator"] }
+raw-window-handle = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
