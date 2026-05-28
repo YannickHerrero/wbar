@@ -1,7 +1,12 @@
 //! Windows AppBar registration. Tells the shell "this window owns a strip of
 //! the screen edge"; once registered, maximised windows stop short of the bar
-//! instead of going under it. No-op on non-Windows targets so the crate still
-//! compiles on Linux for cargo-check during development.
+//! instead of going under it.
+//!
+//! No-op on non-Windows targets. macOS has no equivalent shell-level
+//! reservation API — the closest is reading NSScreen.visibleFrame to
+//! position the bar within the existing available area, which `main.rs`
+//! does via `screen_insets_top_bottom`. macOS apps simply float over
+//! each other; we don't get to claim a strip of pixels for ourselves.
 
 use eframe::Frame;
 
