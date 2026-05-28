@@ -29,6 +29,15 @@ tungstenite = { version = "0.29.0", default-features = false, features = ["hands
 # Linux backend would drag in GTK so we don't list it for other targets.
 tray-icon = { version = "0.24.0", default-features = false }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Needed for: (1) setting NSApplication activation policy to "accessory"
+# so wbar doesn't show a Dock tile or a "wbar" main menu entry, and
+# (2) reading NSScreen.frame / .visibleFrame to offset the bar below
+# the system menu bar.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSResponder", "NSRunningApplication", "NSScreen"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSArray", "NSEnumerator"] }
+
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
 windows = { version = "0.61", features = [
