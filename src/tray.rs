@@ -1,15 +1,17 @@
-//! System tray icon + menu. Without it the bar has no UI affordance to
-//! exit (borderless window, no taskbar entry, no decorations) — the only
-//! alternative would be killing the process from Task Manager.
+//! System tray / menu-bar icon + menu. Without it the bar has no UI
+//! affordance to exit (borderless window, no taskbar entry / Dock tile,
+//! no decorations) — the only alternative would be killing the process
+//! from Task Manager / Activity Monitor.
 //!
-//! Windows-only by design: the bar is Windows-only anyway, and tray-icon's
-//! Linux backend would drag in GTK as a build dep. Other targets get a stub
-//! so the cargo-check workflow on WSL still compiles.
+//! Available on Windows and macOS: tray-icon routes to Shell_NotifyIcon
+//! on Windows and NSStatusBar/NSStatusItem on macOS. The Linux backend
+//! would drag in GTK as a build dep so we don't compile it for other
+//! targets — they get a stub that lets cargo-check still pass.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub use imp::{Tray, TrayEvent, build, poll};
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub use stub::{Tray, TrayEvent, build, poll};
 
 use crate::theme::Theme;
@@ -18,8 +20,9 @@ use crate::theme::Theme;
 /// caller so tray clicks and `wbar toggle`-style invocations share a
 /// single code path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// On non-Windows the stub `poll` always returns None, so the lint can't see
-// any constructor for the variants. Wired up on Windows in imp::poll.
+// On non-supported platforms the stub `poll` always returns None, so the
+// lint can't see any constructor for the variants. Wired up on Windows /
+// macOS inside imp::poll.
 #[allow(dead_code)]
 pub enum TrayEventKind {
     Toggle,
@@ -27,7 +30,7 @@ pub enum TrayEventKind {
     SetTheme(Theme),
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod imp {
     use std::collections::BTreeMap;
     use std::sync::mpsc::{self, Receiver};
@@ -100,7 +103,8 @@ mod imp {
         // latter calls InvalidateRect on the bar HWND so winit's pump
         // actually wakes up to see the flag. Without the wake(), eframe
         // 0.32 on Windows leaves the loop asleep when the only signal is
-        // a background-thread request_repaint.
+        // a background-thread request_repaint. waker.wake() is a no-op on
+        // macOS — request_repaint reliably wakes the Cocoa run loop there.
         let (tx, rx) = mpsc::channel::<MenuEvent>();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             tracing::info!(id = ?event.id, "tray handler fired");
@@ -171,7 +175,7 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 mod stub {
     use anyhow::Result;
     use eframe::egui;
@@ -183,7 +187,7 @@ mod stub {
     pub struct Tray;
 
     pub fn build(_ctx: egui::Context, _waker: Waker) -> Result<Tray> {
-        anyhow::bail!("tray icon is only implemented on Windows")
+        anyhow::bail!("tray icon is only implemented on Windows and macOS")
     }
 
     pub fn poll(_tray: &Tray) -> Option<TrayEvent> {
