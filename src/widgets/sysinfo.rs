@@ -241,30 +241,24 @@ struct Battery {
     charging: bool,
 }
 
-#[cfg(windows)]
+/// Cross-platform battery snapshot via the starship-battery crate (which
+/// wraps IOKit on macOS, GetSystemPowerStatus on Windows, and /sys
+/// power_supply on Linux).
+///
+/// Returns None when no battery is present (desktops) or when the OS
+/// can't report a state of charge — the widget hides itself in either
+/// case, matching the previous Win32-only behaviour.
 fn read_battery() -> Option<Battery> {
-    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
-
-    let mut status = SYSTEM_POWER_STATUS::default();
-    // SAFETY: GetSystemPowerStatus writes into the pointer we pass; it does
-    // not retain it after returning.
-    let ok = unsafe { GetSystemPowerStatus(&mut status) };
-    if ok.is_err() {
-        return None;
-    }
-    // BatteryLifePercent == 255 means "unknown"; BatteryFlag bit 7 (0x80)
-    // means "no system battery present" — both should hide the widget.
-    if status.BatteryLifePercent == 255 || status.BatteryFlag & 0x80 != 0 {
-        return None;
-    }
-    Some(Battery {
-        percent: f64::from(status.BatteryLifePercent),
-        // ACLineStatus: 0 = offline, 1 = online, 255 = unknown.
-        charging: status.ACLineStatus == 1,
-    })
-}
-
-#[cfg(not(windows))]
-fn read_battery() -> Option<Battery> {
-    None
+    let manager = starship_battery::Manager::new().ok()?;
+    let battery = manager.batteries().ok()?.next()?.ok()?;
+    // state_of_charge() returns a uom Ratio in 0.0..=1.0; multiply for %.
+    let percent = f64::from(battery.state_of_charge().value) * 100.0;
+    // Treat Full + Charging both as "on AC" so the charging_icon stays
+    // shown while the laptop sits plugged in at 100%. Discharging /
+    // Unknown / Empty fall through to "on battery".
+    let charging = matches!(
+        battery.state(),
+        starship_battery::State::Charging | starship_battery::State::Full
+    );
+    Some(Battery { percent, charging })
 }
