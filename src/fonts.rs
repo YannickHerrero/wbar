@@ -114,18 +114,31 @@ fn discover(filenames: &[&str]) -> Option<(PathBuf, Vec<u8>)> {
 
 fn font_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    // Per-user font dir (where most modern Windows font installs land).
-    if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
-        dirs.push(
-            PathBuf::from(localappdata)
-                .join("Microsoft")
-                .join("Windows")
-                .join("Fonts"),
-        );
+    #[cfg(windows)]
+    {
+        // Per-user font dir (where most modern Windows font installs land).
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            dirs.push(
+                PathBuf::from(localappdata)
+                    .join("Microsoft")
+                    .join("Windows")
+                    .join("Fonts"),
+            );
+        }
+        // Machine-wide font dir.
+        if let Ok(windir) = std::env::var("WINDIR") {
+            dirs.push(PathBuf::from(windir).join("Fonts"));
+        }
     }
-    // Machine-wide font dir.
-    if let Ok(windir) = std::env::var("WINDIR") {
-        dirs.push(PathBuf::from(windir).join("Fonts"));
+    #[cfg(target_os = "macos")]
+    {
+        // Per-user dir first so user installs win over system fonts,
+        // matching the Windows ordering above.
+        if let Some(home) = dirs::home_dir() {
+            dirs.push(home.join("Library").join("Fonts"));
+        }
+        dirs.push(PathBuf::from("/Library/Fonts"));
+        dirs.push(PathBuf::from("/System/Library/Fonts"));
     }
     dirs
 }
