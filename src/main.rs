@@ -174,6 +174,40 @@ fn set_macos_accessory_policy() {
 #[cfg(not(target_os = "macos"))]
 fn set_macos_accessory_policy() {}
 
+/// Return (top_inset, bottom_inset) in logical points for the main
+/// screen. On macOS this is the system menu-bar height at the top and
+/// the Dock height at the bottom (when the Dock is positioned at the
+/// bottom — side Docks yield 0). On other platforms returns (0, 0).
+///
+/// Used by `pin_to_edge` so a top-positioned bar sits below the system
+/// menu bar instead of underneath it, and a bottom-positioned bar
+/// clears the Dock.
+fn screen_insets_top_bottom() -> (f32, f32) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::NSScreen;
+        let Some(mtm) = objc2::MainThreadMarker::new() else {
+            return (0.0, 0.0);
+        };
+        let Some(screen) = NSScreen::mainScreen(mtm) else {
+            return (0.0, 0.0);
+        };
+        let frame = screen.frame();
+        let visible = screen.visibleFrame();
+        // macOS coords: bottom-left origin, Y up. Menu bar is the slab
+        // missing from the *top* of visibleFrame; Dock (when at the
+        // bottom) is the slab missing from the *bottom*.
+        let menu_bar =
+            (frame.origin.y + frame.size.height) - (visible.origin.y + visible.size.height);
+        let dock_bottom = visible.origin.y - frame.origin.y;
+        (menu_bar.max(0.0) as f32, dock_bottom.max(0.0) as f32)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        (0.0, 0.0)
+    }
+}
+
 /// Initialise tracing with two layers:
 ///   - stderr (visible in debug builds where the console subsystem is
 ///     attached; controlled by RUST_LOG, defaults to info).
@@ -486,9 +520,14 @@ impl WbarApp {
             return;
         };
         let height = self.cfg.bar.height;
+        // (0, 0) everywhere except macOS — there the bar sits below the
+        // system menu bar (Top) or above the Dock (Bottom) instead of
+        // overlapping them, since macOS has no AppBar-equivalent shell
+        // reservation API for us to claim the strip.
+        let (top_inset, bottom_inset) = screen_insets_top_bottom();
         let y = match self.cfg.bar.position {
-            BarPosition::Top => 0.0,
-            BarPosition::Bottom => monitor_size.y - height,
+            BarPosition::Top => top_inset,
+            BarPosition::Bottom => monitor_size.y - height - bottom_inset,
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
             monitor_size.x,
@@ -499,6 +538,8 @@ impl WbarApp {
             position = ?self.cfg.bar.position,
             width = monitor_size.x,
             height,
+            top_inset,
+            bottom_inset,
             "pinned bar"
         );
         self.pinned = true;
