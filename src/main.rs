@@ -58,6 +58,11 @@ fn main() -> eframe::Result {
         std::process::exit(code);
     }
 
+    // macOS: declare the app as a menu-bar accessory before winit/eframe
+    // initialises NSApplication so the brief "regular app" visual (Dock
+    // tile, top main menu) never appears. No-op on other targets.
+    set_macos_accessory_policy();
+
     let config_path = config::default_path();
     init_tracing(config_path.as_deref());
     let cfg = match config::load(config_path.as_deref()) {
@@ -150,6 +155,24 @@ fn main() -> eframe::Result {
         }),
     )
 }
+
+/// Set the macOS application activation policy to `.accessory` so wbar
+/// behaves like a menu-bar utility — no Dock tile, no "wbar" entry in
+/// the system-wide top menu bar, doesn't steal focus on launch. Safe to
+/// call before NSApplication is fully bootstrapped: `sharedApplication`
+/// is idempotent and creates the singleton on the first call.
+#[cfg(target_os = "macos")]
+fn set_macos_accessory_policy() {
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+    let mtm = objc2::MainThreadMarker::new()
+        .expect("set_macos_accessory_policy must run on the main thread");
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    tracing::debug!("set macOS NSApplication activation policy to Accessory");
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_macos_accessory_policy() {}
 
 /// Initialise tracing with two layers:
 ///   - stderr (visible in debug builds where the console subsystem is
