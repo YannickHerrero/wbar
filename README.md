@@ -1,6 +1,6 @@
 # wbar
 
-A minimalist status bar for Windows, designed to pair with [GlazeWM](https://github.com/glzr-io/glazewm).
+A minimalist status bar for Windows and macOS, designed to pair with [GlazeWM](https://github.com/glzr-io/glazewm).
 
 Single binary, no webview, no build pipeline — just one TOML config file, a handful of built-in widgets, and five named themes out of the box.
 
