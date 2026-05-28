@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,4 +19,26 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: target/release/wbar.exe
+          generate_release_notes: true
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Build aarch64 (Apple Silicon)
+        run: cargo build --release --target aarch64-apple-darwin
+      - name: Build x86_64 (Intel)
+        run: cargo build --release --target x86_64-apple-darwin
+      - name: Lipo into universal binary
+        run: |
+          lipo -create -output wbar-macos \
+            target/aarch64-apple-darwin/release/wbar \
+            target/x86_64-apple-darwin/release/wbar
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: wbar-macos
           generate_release_notes: true
