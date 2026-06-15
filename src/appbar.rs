@@ -47,9 +47,10 @@ mod imp {
         SHAppBarMessage,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GWL_EXSTYLE, GetSystemMetrics, GetWindowLongPtrW, SM_CXSCREEN, SM_CYSCREEN,
+        GWL_EXSTYLE, GWL_STYLE, GetSystemMetrics, GetWindowLongPtrW, SM_CXSCREEN, SM_CYSCREEN,
         SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
-        WS_EX_TOOLWINDOW,
+        WS_CAPTION, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
+        WS_THICKFRAME,
     };
 
     pub struct AppBar {
@@ -81,21 +82,39 @@ mod imp {
         }
     }
 
-    /// Add `WS_EX_TOOLWINDOW` to the bar's extended window styles. This is
-    /// the canonical "I'm a dock/utility window, not a regular app" hint
-    /// that taskbars, Alt+Tab handlers, and tiling window managers all
-    /// look at. egui's `with_taskbar(false)` only calls
-    /// `ITaskbarList::DeleteTab` which removes the taskbar entry but
-    /// leaves the window otherwise indistinguishable from a normal app.
+    /// Make the bar's HWND a true borderless tool window:
+    ///   - add `WS_EX_TOOLWINDOW` (excludes it from the taskbar, Alt+Tab,
+    ///     and from tiling WMs like GlazeWM which key off the standard
+    ///     "is this a managed app?" Win32 hints),
+    ///   - strip `WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MIN/MAXBOX`
+    ///     and add `WS_POPUP`. winit's `with_decorations(false)` only
+    ///     overrides `WM_NCCALCSIZE` to collapse the visible non-client
+    ///     area — it leaves the chrome style bits in place. That works
+    ///     visually, but `AdjustWindowRectEx` is a pure function: it
+    ///     computes chrome offsets from the style bits alone, ignoring
+    ///     `WM_NCCALCSIZE`. So any code path inside eframe/winit that
+    ///     translates an inner rect to an outer rect (e.g. deferred
+    ///     application of `ViewportBuilder::with_inner_size`) will shift
+    ///     the window by ~84 physical px at 150 % DPI. Stripping the
+    ///     chrome bits makes `AdjustWindowRectEx` a no-op.
     ///
     /// SAFETY: caller guarantees `hwnd` is a live, owned window.
     unsafe fn mark_as_toolwindow(hwnd: HWND) {
-        let current = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
-        let new = current | (WS_EX_TOOLWINDOW.0 as isize);
-        if current == new {
+        let ex_current = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+        let ex_new = ex_current | (WS_EX_TOOLWINDOW.0 as isize);
+        let chrome = (WS_CAPTION.0 | WS_THICKFRAME.0 | WS_SYSMENU.0 | WS_MAXIMIZEBOX.0
+            | WS_MINIMIZEBOX.0) as isize;
+        let style_current = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
+        let style_new = (style_current & !chrome) | (WS_POPUP.0 as isize);
+        if ex_current == ex_new && style_current == style_new {
             return;
         }
-        unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new) };
+        if ex_current != ex_new {
+            unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_new) };
+        }
+        if style_current != style_new {
+            unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, style_new) };
+        }
         // SetWindowLongPtrW takes effect on the next SetWindowPos with
         // SWP_FRAMECHANGED. Force it now so the change is visible to
         // the shell immediately (do_register's SetWindowPos that
@@ -111,7 +130,13 @@ mod imp {
                 SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE,
             )
         };
-        tracing::info!("marked bar HWND as WS_EX_TOOLWINDOW");
+        tracing::info!(
+            ex_before = format!("0x{:X}", ex_current),
+            ex_after = format!("0x{:X}", ex_new),
+            style_before = format!("0x{:X}", style_current),
+            style_after = format!("0x{:X}", style_new),
+            "marked bar HWND as borderless tool window",
+        );
     }
 
     impl Drop for AppBar {
