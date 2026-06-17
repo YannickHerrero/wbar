@@ -81,7 +81,16 @@ fn main() -> eframe::Result {
         .with_decorations(false)
         .with_resizable(false)
         .with_transparent(false)
-        .with_always_on_top()
+        // Deliberately NOT always-on-top. The AppBar reservation
+        // (see appbar.rs) already keeps tiled/maximised windows out of
+        // the bar's strip, so the bar stays visible without claiming
+        // WS_EX_TOPMOST. Forcing topmost would make the bar paint over
+        // windows that *do* cover the strip — notably GlazeWM's
+        // fullscreen mode (shift+f), which ignores the work-area
+        // reservation and spans the whole monitor. Without topmost such
+        // a window correctly sits in front of the bar, hiding it.
+        // macOS is unaffected: promote_macos_window_above_menubar pins
+        // the level to NSStatusWindowLevel regardless.
         .with_taskbar(false)
         .with_inner_size([800.0, cfg.bar.height])
         .with_position([0.0, 0.0]);
