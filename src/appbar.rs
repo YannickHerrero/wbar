@@ -35,6 +35,21 @@ pub fn register(frame: &Frame, edge: Edge, height: i32, waker: &Waker) -> Option
     AppBar::try_register(frame, edge, height, waker)
 }
 
+/// Re-assert the borderless tool-window styling on the bar's HWND. winit
+/// re-applies its own window styles the first time a viewport is shown, which
+/// clobbers the marking done during `register` (we create the window hidden
+/// and mark it before revealing, to dodge the tiling-WM startup race). Calling
+/// this for a few frames after reveal restores `WS_EX_TOOLWINDOW` so the bar
+/// stays out of the taskbar, Alt+Tab, and a tiling WM's managed set. No-op
+/// before the HWND exists and on non-Windows.
+#[cfg(windows)]
+pub fn reassert_toolwindow(frame: &Frame) {
+    imp::reassert_toolwindow(frame);
+}
+
+#[cfg(not(windows))]
+pub fn reassert_toolwindow(_frame: &Frame) {}
+
 #[cfg(windows)]
 mod imp {
     use super::{Edge, Frame, Waker};
@@ -48,9 +63,9 @@ mod imp {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GWL_EXSTYLE, GWL_STYLE, GetSystemMetrics, GetWindowLongPtrW, SM_CXSCREEN, SM_CYSCREEN,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
-        WS_CAPTION, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
-        WS_THICKFRAME,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW,
+        SetWindowPos, WS_CAPTION, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP,
+        WS_SYSMENU, WS_THICKFRAME,
     };
 
     pub struct AppBar {
@@ -118,7 +133,11 @@ mod imp {
         // SetWindowLongPtrW takes effect on the next SetWindowPos with
         // SWP_FRAMECHANGED. Force it now so the change is visible to
         // the shell immediately (do_register's SetWindowPos that
-        // follows doesn't carry SWP_FRAMECHANGED).
+        // follows doesn't carry SWP_FRAMECHANGED). SWP_NOMOVE | SWP_NOSIZE
+        // make this apply *only* the frame change: without them the 0,0,0,0
+        // args would collapse the window to zero size, which is harmless when
+        // do_register repositions right after but breaks a standalone
+        // re-assert (reassert_toolwindow) that has no following SetWindowPos.
         let _ = unsafe {
             SetWindowPos(
                 hwnd,
@@ -127,7 +146,7 @@ mod imp {
                 0,
                 0,
                 0,
-                SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             )
         };
         tracing::info!(
@@ -154,6 +173,15 @@ mod imp {
             Some(HWND(h.hwnd.get() as *mut _))
         } else {
             None
+        }
+    }
+
+    pub fn reassert_toolwindow(frame: &Frame) {
+        if let Some(hwnd) = hwnd_from_frame(frame) {
+            // SAFETY: hwnd is a live window owned by this process's eframe
+            // viewport. mark_as_toolwindow self-checks and no-ops once the
+            // styling already matches.
+            unsafe { mark_as_toolwindow(hwnd) };
         }
     }
 

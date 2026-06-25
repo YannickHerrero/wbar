@@ -92,6 +92,11 @@ fn main() -> eframe::Result {
         // macOS is unaffected: promote_macos_window_above_menubar pins
         // the level to NSStatusWindowLevel regardless.
         .with_taskbar(false)
+        // Start hidden. update() reveals the window only after it has been
+        // positioned and, on Windows, marked WS_EX_TOOLWINDOW — so a tiling
+        // WM (GlazeWM) never sees an unmanaged, on-screen wbar window to adopt
+        // during a cold-started build's slow first frame.
+        .with_visible(false)
         .with_inner_size([800.0, cfg.bar.height])
         .with_position([0.0, 0.0]);
 
@@ -115,6 +120,11 @@ fn main() -> eframe::Result {
             cc.egui_ctx.style_mut(|s| {
                 s.interaction.selectable_labels = false;
             });
+
+            // The window starts hidden; force at least one update() so it can
+            // be positioned and revealed even if the OS withholds paint
+            // messages from an invisible window.
+            cc.egui_ctx.request_repaint();
 
             // A shared cross-thread waker. Background subsystems (tray,
             // IPC, glazewm, hot-reload) call waker.wake() after notifying
@@ -397,6 +407,17 @@ struct WbarApp {
     /// bar yet. False until the NSView is reachable via raw-window-
     /// handle (typically the first frame). Stays false on non-macOS.
     macos_window_promoted: bool,
+    /// Whether the initially-hidden window has been revealed yet. The window
+    /// is shown only after its first successful layout (see update()) so a
+    /// tiling WM can't adopt it mid-startup.
+    shown: bool,
+    /// Frames elapsed while still hidden — an anti-deadlock fallback so the
+    /// window is revealed even if the first layout never reports ready.
+    boot_frames: u32,
+    /// Remaining frames over which to re-assert the tool-window styling after
+    /// the window is revealed. winit clobbers the marking once, on first show;
+    /// re-asserting for a handful of frames restores it. Counts down to 0.
+    toolwindow_reasserts: u8,
 }
 
 impl WbarApp {
@@ -426,6 +447,9 @@ impl WbarApp {
             ipc_rx,
             waker,
             macos_window_promoted: false,
+            shown: false,
+            boot_frames: 0,
+            toolwindow_reasserts: 15,
         }
     }
 
@@ -540,6 +564,22 @@ impl WbarApp {
         self.appbar = appbar::register(frame, edge, height, &self.waker);
     }
 
+    /// True once the window has been positioned for the first time and is
+    /// safe to reveal: on Windows that means the AppBar reservation is in
+    /// place (registering it also marks the window WS_EX_TOOLWINDOW);
+    /// elsewhere it means pin_to_edge has run (and, on macOS, the window
+    /// level was raised above the menu bar).
+    fn layout_ready(&self) -> bool {
+        #[cfg(windows)]
+        {
+            self.appbar.is_some()
+        }
+        #[cfg(not(windows))]
+        {
+            self.pinned && self.macos_window_promoted
+        }
+    }
+
     /// Drain any pending config reloads from the watcher and apply the latest.
     fn drain_reloads(&mut self, ctx: &egui::Context) {
         let Some(hot) = &self.hot else {
@@ -595,6 +635,15 @@ impl WbarApp {
             BarPosition::Top => top_inset,
             BarPosition::Bottom => monitor_size.y - height - bottom_inset,
         };
+        // Width is driven through egui only off Windows. On Windows the
+        // AppBar (appbar::register) sets the physical size and position via
+        // SetWindowPos; if egui also sent InnerSize, winit would apply it a
+        // frame later using its cached, caption-inclusive frame border
+        // (with_decorations(false) leaves the chrome style bits in place until
+        // appbar.rs strips them), nudging the bar down ~one caption height on
+        // first show. OuterPosition is a pure move with no inner->outer border
+        // math, so it stays correct on every platform.
+        #[cfg(not(windows))]
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
             monitor_size.x,
             height,
@@ -639,6 +688,34 @@ impl eframe::App for WbarApp {
         }
         self.pin_to_edge(ctx);
         self.register_appbar(frame);
+
+        // Reveal the initially-hidden window once it has been laid out (and,
+        // on Windows, marked as a tool window). This closes the cold-start
+        // race where GlazeWM would adopt the still-unmanaged window during a
+        // slow first frame and tile it into the centre of the screen. The
+        // boot_frames fallback guarantees the window can never stay stuck
+        // hidden if the first layout never reports ready.
+        if !self.shown {
+            self.boot_frames = self.boot_frames.saturating_add(1);
+            if self.layout_ready() || self.boot_frames > 120 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                self.shown = true;
+                tracing::info!(boot_frames = self.boot_frames, "revealed bar");
+            } else {
+                // A hidden window may receive no OS paint messages; keep the
+                // loop turning until layout is ready.
+                ctx.request_repaint();
+            }
+        } else if self.toolwindow_reasserts > 0 {
+            // winit re-applies its window styles when the viewport is first
+            // shown, undoing the tool-window marking from registration. Re-
+            // assert it for a few frames after reveal so the bar stays out of
+            // the taskbar and Alt+Tab; reassert_toolwindow self-checks, so it
+            // no-ops once the styling sticks.
+            self.toolwindow_reasserts -= 1;
+            appbar::reassert_toolwindow(frame);
+            ctx.request_repaint();
+        }
 
         // CentralPanel defaults to a Frame with ~8px margins on every side,
         // which would eat most of a 28px bar and leave too little vertical
