@@ -30,7 +30,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use std::sync::mpsc::Receiver;
 
 use crate::appbar::{AppBar, Edge};
-use crate::config::{BarPosition, Config};
+use crate::config::{BarPosition, Config, LayoutConfig};
 use crate::glazewm::GlazewmClient;
 use crate::hotreload::HotReload;
 use crate::ipc::IpcCommand;
@@ -382,6 +382,20 @@ fn print_usage(prog: &str) {
     eprintln!("  {prog} --help              Show this message");
 }
 
+/// State for one secondary-monitor bar: a child viewport mirroring the root
+/// bar, plus its own AppBar reservation on that monitor.
+#[cfg(windows)]
+struct ChildBar {
+    monitor: appbar::MonitorInfo,
+    viewport_id: egui::ViewportId,
+    /// Reservation for this monitor's strip; None until the child window
+    /// exists and registration succeeds.
+    appbar: Option<AppBar>,
+    /// Remaining frames over which to re-assert the tool-window styling after
+    /// the child window is first shown (winit clobbers it on show).
+    reasserts: u8,
+}
+
 struct WbarApp {
     cfg: Config,
     /// Path where Config::save writes. Tray theme switcher and IPC
@@ -418,6 +432,13 @@ struct WbarApp {
     /// the window is revealed. winit clobbers the marking once, on first show;
     /// re-asserting for a handful of frames restores it. Counts down to 0.
     toolwindow_reasserts: u8,
+    /// One bar per non-primary monitor (Windows only). Empty until the first
+    /// update enumerates the displays.
+    #[cfg(windows)]
+    child_bars: Vec<ChildBar>,
+    /// Whether the secondary monitors have been enumerated yet.
+    #[cfg(windows)]
+    monitors_enumerated: bool,
 }
 
 impl WbarApp {
@@ -450,6 +471,10 @@ impl WbarApp {
             shown: false,
             boot_frames: 0,
             toolwindow_reasserts: 15,
+            #[cfg(windows)]
+            child_bars: Vec::new(),
+            #[cfg(windows)]
+            monitors_enumerated: false,
         }
     }
 
@@ -508,6 +533,15 @@ impl WbarApp {
             // Drop the AppBar first so other windows reflow before the
             // move takes effect, avoiding a one-frame visual glitch.
             self.appbar = None;
+            // Release the secondary monitors' reservations too. Their child
+            // viewports close on their own once update() stops re-showing them
+            // while hidden; clearing the AppBar issues ABM_REMOVE, and the
+            // reset re-registers + re-pins them when the bar is shown again.
+            #[cfg(windows)]
+            for child in &mut self.child_bars {
+                child.appbar = None;
+                child.reasserts = 15;
+            }
             // Park the window far off-screen instead of using
             // ViewportCommand::Visible(false). Hiding the root viewport
             // makes eframe stop scheduling paint cycles for it, and
@@ -717,100 +751,161 @@ impl eframe::App for WbarApp {
             ctx.request_repaint();
         }
 
-        // CentralPanel defaults to a Frame with ~8px margins on every side,
-        // which would eat most of a 28px bar and leave too little vertical
-        // room for text to centre. Replace it with a zero-vertical-margin
-        // frame so widgets get the full bar height; horizontal margin
-        // (BAR_EDGE_PAD) is the breathing room between the bar contents and
-        // the screen edges.
-        let bg = ctx.style().visuals.panel_fill;
-        let frame_style = egui::Frame::new()
-            .fill(bg)
-            .inner_margin(egui::Margin::symmetric(BAR_EDGE_PAD, 0));
-        egui::CentralPanel::default()
-            .frame(frame_style)
-            .show(ctx, |ui| {
-                self.draw_regions(ui);
-            });
+        draw_bar(ctx, &mut self.widgets, &self.cfg.layout, self.cfg.bar.height);
+
+        // Mirror the same bar onto every other monitor as immediate child
+        // viewports, each positioned and reserved on its own display.
+        #[cfg(windows)]
+        self.update_child_bars(ctx);
     }
 }
 
-impl WbarApp {
-    fn bar_height(&self) -> f32 {
-        self.cfg.bar.height
+/// Paint the bar into a viewport's CentralPanel. Shared by the root window
+/// and every per-monitor child viewport, so they render identical content.
+fn draw_bar(ctx: &egui::Context, widgets: &mut Widgets, layout: &LayoutConfig, bar_h: f32) {
+    // CentralPanel defaults to a Frame with ~8px margins on every side, which
+    // would eat most of a 28px bar and leave too little vertical room for text
+    // to centre. Replace it with a zero-vertical-margin frame so widgets get
+    // the full bar height; horizontal margin (BAR_EDGE_PAD) is the breathing
+    // room between the bar contents and the screen edges.
+    let bg = ctx.style().visuals.panel_fill;
+    let frame_style = egui::Frame::new()
+        .fill(bg)
+        .inner_margin(egui::Margin::symmetric(BAR_EDGE_PAD, 0));
+    egui::CentralPanel::default()
+        .frame(frame_style)
+        .show(ctx, |ui| {
+            draw_regions(ui, widgets, layout, bar_h);
+        });
+}
+
+fn draw_regions(ui: &mut egui::Ui, widgets: &mut Widgets, layout: &LayoutConfig, bar_h: f32) {
+    // Compute three equal rects explicitly. The previous horizontal_centered +
+    // 3·allocate_ui_with_layout chain relied on Layout::left_to_right's default
+    // main_align = Center, which re-centred the whole row whenever item_spacing
+    // (default ≈8px) pushed the three thirds past the panel width. That left
+    // the right slot's right edge well short of the screen edge.
+    let max_rect = ui.max_rect();
+    let total_w = max_rect.width();
+    let third = total_w / 3.0;
+    let top = max_rect.top();
+
+    // Reserve the full panel area so the CentralPanel's min_rect matches what
+    // we actually paint into.
+    ui.allocate_rect(max_rect, egui::Sense::hover());
+
+    let left_rect =
+        egui::Rect::from_min_size(egui::pos2(max_rect.left(), top), egui::vec2(third, bar_h));
+    let center_rect = egui::Rect::from_min_size(
+        egui::pos2(max_rect.left() + third, top),
+        egui::vec2(third, bar_h),
+    );
+    let right_rect = egui::Rect::from_min_size(
+        egui::pos2(max_rect.left() + 2.0 * third, top),
+        egui::vec2(third, bar_h),
+    );
+
+    render_region(
+        ui,
+        widgets,
+        left_rect,
+        egui::Layout::left_to_right(egui::Align::Center),
+        &layout.left,
+    );
+    render_region(
+        ui,
+        widgets,
+        center_rect,
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+        &layout.center,
+    );
+    render_region(
+        ui,
+        widgets,
+        right_rect,
+        egui::Layout::right_to_left(egui::Align::Center),
+        &layout.right,
+    );
+}
+
+fn render_region(
+    ui: &mut egui::Ui,
+    widgets: &mut Widgets,
+    rect: egui::Rect,
+    layout: egui::Layout,
+    ids: &[String],
+) {
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
+    child.spacing_mut().item_spacing.x = REGION_ITEM_SPACING;
+    // For right_to_left, add_space is consumed at the right edge so glyphs with
+    // positive right-side bearing don't paint past the slot edge. left_to_right
+    // gets a leading cushion for symmetry.
+    if matches!(layout.main_dir, egui::Direction::RightToLeft) {
+        child.add_space(RIGHT_EDGE_CUSHION);
+    }
+    for id in ids {
+        widgets.render(&mut child, id);
     }
 }
 
+#[cfg(windows)]
 impl WbarApp {
-    fn draw_regions(&mut self, ui: &mut egui::Ui) {
-        // Compute three equal rects explicitly. The previous
-        // horizontal_centered + 3·allocate_ui_with_layout chain relied on
-        // Layout::left_to_right's default main_align = Center, which
-        // re-centred the whole row whenever item_spacing (default ≈8px)
-        // pushed the three thirds past the panel width. That left the
-        // right slot's right edge well short of the screen edge.
-        let max_rect = ui.max_rect();
-        let bar_h = self.bar_height();
-        let total_w = max_rect.width();
-        let third = total_w / 3.0;
-        let top = max_rect.top();
-
-        // Reserve the full panel area so the CentralPanel's min_rect
-        // matches what we actually paint into.
-        ui.allocate_rect(max_rect, egui::Sense::hover());
-
-        let left_rect =
-            egui::Rect::from_min_size(egui::pos2(max_rect.left(), top), egui::vec2(third, bar_h));
-        let center_rect = egui::Rect::from_min_size(
-            egui::pos2(max_rect.left() + third, top),
-            egui::vec2(third, bar_h),
-        );
-        let right_rect = egui::Rect::from_min_size(
-            egui::pos2(max_rect.left() + 2.0 * third, top),
-            egui::vec2(third, bar_h),
-        );
-
-        let left = self.cfg.layout.left.clone();
-        let center = self.cfg.layout.center.clone();
-        let right = self.cfg.layout.right.clone();
-
-        self.render_region(
-            ui,
-            left_rect,
-            egui::Layout::left_to_right(egui::Align::Center),
-            &left,
-        );
-        self.render_region(
-            ui,
-            center_rect,
-            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-            &center,
-        );
-        self.render_region(
-            ui,
-            right_rect,
-            egui::Layout::right_to_left(egui::Align::Center),
-            &right,
-        );
-    }
-
-    fn render_region(
-        &mut self,
-        ui: &mut egui::Ui,
-        rect: egui::Rect,
-        layout: egui::Layout,
-        ids: &[String],
-    ) {
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
-        child.spacing_mut().item_spacing.x = REGION_ITEM_SPACING;
-        // For right_to_left, add_space is consumed at the right edge so
-        // glyphs with positive right-side bearing don't paint past the
-        // slot edge. left_to_right gets a leading cushion for symmetry.
-        if matches!(layout.main_dir, egui::Direction::RightToLeft) {
-            child.add_space(RIGHT_EDGE_CUSHION);
+    /// Mirror the bar onto each non-primary monitor. Enumerates the displays
+    /// once, then every frame re-shows each immediate child viewport and, as
+    /// soon as its window exists, pins and reserves it on its own monitor.
+    fn update_child_bars(&mut self, ctx: &egui::Context) {
+        if !self.monitors_enumerated {
+            self.monitors_enumerated = true;
+            for mon in appbar::enumerate_monitors() {
+                if mon.is_primary {
+                    continue;
+                }
+                let viewport_id =
+                    egui::ViewportId(egui::Id::new(format!("wbar-bar-{}", mon.device_name)));
+                self.child_bars.push(ChildBar {
+                    monitor: mon,
+                    viewport_id,
+                    appbar: None,
+                    reasserts: 15,
+                });
+            }
+            tracing::info!(count = self.child_bars.len(), "enumerated secondary monitors");
         }
-        for id in ids {
-            self.widgets.render(&mut child, id);
+
+        let edge = self.edge();
+        let height_i = self.cfg.bar.height as i32;
+        let bar_h = self.cfg.bar.height;
+        for i in 0..self.child_bars.len() {
+            let vid = self.child_bars[i].viewport_id;
+            // The unique title doubles as the key for recovering the child's
+            // HWND (eframe exposes no handle for child viewports).
+            let title = self.child_bars[i].monitor.device_name.clone();
+            let builder = egui::ViewportBuilder::default()
+                .with_title(title.clone())
+                .with_decorations(false)
+                .with_resizable(false)
+                .with_taskbar(false)
+                .with_inner_size([800.0, bar_h]);
+            ctx.show_viewport_immediate(vid, builder, |child_ctx, _class| {
+                draw_bar(child_ctx, &mut self.widgets, &self.cfg.layout, bar_h);
+            });
+
+            let mon = self.child_bars[i].monitor.clone();
+            if self.child_bars[i].appbar.is_none() {
+                // The window now exists; pin + reserve it on its monitor.
+                self.child_bars[i].appbar =
+                    appbar::register_on_monitor(&title, edge, height_i, &mon);
+                ctx.request_repaint();
+            } else if self.child_bars[i].reasserts > 0 {
+                // winit clobbers the tool-window styling on first show and
+                // rescales the window via WM_DPICHANGED when it lands on a
+                // different-DPI monitor. Re-assert both for a few frames so the
+                // child keeps its tool-window style and intended physical size.
+                self.child_bars[i].reasserts -= 1;
+                appbar::reassert_toolwindow_by_title(&title);
+                appbar::reposition_on_monitor(&title, edge, height_i, &mon);
+                ctx.request_repaint();
+            }
         }
     }
 }
