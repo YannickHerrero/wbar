@@ -396,6 +396,10 @@ struct ChildBar {
     /// Remaining frames over which to re-assert the tool-window styling after
     /// the child window is first shown (winit clobbers it on show).
     reasserts: u8,
+    /// Whether the (initially hidden) child window has been revealed yet. Held
+    /// hidden until it is positioned and DPI-settled so it never flashes at a
+    /// default spot or the wrong size.
+    shown: bool,
 }
 
 struct WbarApp {
@@ -566,6 +570,7 @@ impl WbarApp {
             for child in &mut self.child_bars {
                 child.appbar = None;
                 child.reasserts = 15;
+                child.shown = false;
             }
             // Park the window far off-screen instead of using
             // ViewportCommand::Visible(false). Hiding the root viewport
@@ -906,6 +911,7 @@ impl WbarApp {
                 viewport_id,
                 appbar: None,
                 reasserts: 15,
+                shown: false,
             });
         }
         tracing::info!(
@@ -935,6 +941,9 @@ impl WbarApp {
                 .with_decorations(false)
                 .with_resizable(false)
                 .with_taskbar(false)
+                // Start hidden; revealed below once positioned and DPI-settled,
+                // so the bar never flashes at a default spot or the wrong size.
+                .with_visible(false)
                 .with_inner_size([800.0, bar_h]);
             ctx.show_viewport_immediate(vid, builder, |child_ctx, _class| {
                 draw_bar(child_ctx, &mut self.widgets, &self.cfg.layout, bar_h);
@@ -955,6 +964,17 @@ impl WbarApp {
                 appbar::reassert_toolwindow_by_title(&title);
                 appbar::reposition_on_monitor(&title, edge, height_i, &mon);
                 ctx.request_repaint();
+            }
+
+            // Reveal once registered and given a few settle frames (reasserts
+            // counts down from 15 after registration), so the window has its
+            // final monitor position and size before it becomes visible.
+            if !self.child_bars[i].shown
+                && self.child_bars[i].appbar.is_some()
+                && self.child_bars[i].reasserts <= 12
+            {
+                ctx.send_viewport_cmd_to(vid, egui::ViewportCommand::Visible(true));
+                self.child_bars[i].shown = true;
             }
         }
     }
