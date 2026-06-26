@@ -31,7 +31,7 @@ use std::sync::mpsc::Receiver;
 
 use crate::appbar::{AppBar, Edge};
 use crate::config::{BarPosition, Config, LayoutConfig};
-use crate::glazewm::GlazewmClient;
+use crate::glazewm::{GlazewmClient, MonitorTarget};
 use crate::hotreload::HotReload;
 use crate::ipc::IpcCommand;
 use crate::theme::Theme;
@@ -376,7 +376,9 @@ fn print_usage(prog: &str) {
     eprintln!("  {prog}                     Run the bar (no arguments)");
     eprintln!("  {prog} toggle              Show/hide the bar");
     eprintln!("  {prog} show                Show the bar");
-    eprintln!("  {prog} hide                Hide the bar (releases the AppBar reservation on Windows)");
+    eprintln!(
+        "  {prog} hide                Hide the bar (releases the AppBar reservation on Windows)"
+    );
     eprintln!("  {prog} quit                Exit the running bar");
     eprintln!("  {prog} set-theme <name>    Switch theme (Paper|Stone|Sage|Clay|Ink)");
     eprintln!("  {prog} --help              Show this message");
@@ -439,6 +441,10 @@ struct WbarApp {
     /// Whether the secondary monitors have been enumerated yet.
     #[cfg(windows)]
     monitors_enumerated: bool,
+    /// GDI device name of the primary monitor (the root viewport's display),
+    /// so the root bar shows that monitor's workspaces. None until enumerated.
+    #[cfg(windows)]
+    primary_device: Option<String>,
 }
 
 impl WbarApp {
@@ -475,6 +481,25 @@ impl WbarApp {
             child_bars: Vec::new(),
             #[cfg(windows)]
             monitors_enumerated: false,
+            #[cfg(windows)]
+            primary_device: None,
+        }
+    }
+
+    /// Which monitor's workspaces the root bar shows: the primary display once
+    /// known, otherwise the focused monitor (a safe fallback for the first
+    /// frame and for non-Windows single-bar use).
+    fn root_target(&self) -> MonitorTarget {
+        #[cfg(windows)]
+        {
+            match &self.primary_device {
+                Some(dev) => MonitorTarget::Device(dev.clone()),
+                None => MonitorTarget::Focused,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            MonitorTarget::Focused
         }
     }
 
@@ -751,10 +776,22 @@ impl eframe::App for WbarApp {
             ctx.request_repaint();
         }
 
-        draw_bar(ctx, &mut self.widgets, &self.cfg.layout, self.cfg.bar.height);
+        // Enumerate displays before drawing so the root bar can target the
+        // primary monitor's workspaces from the first frame.
+        #[cfg(windows)]
+        self.ensure_monitors_enumerated();
 
-        // Mirror the same bar onto every other monitor as immediate child
-        // viewports, each positioned and reserved on its own display.
+        let root_target = self.root_target();
+        self.widgets.set_monitor_target(&root_target);
+        draw_bar(
+            ctx,
+            &mut self.widgets,
+            &self.cfg.layout,
+            self.cfg.bar.height,
+        );
+
+        // Mirror the bar onto every other monitor as immediate child
+        // viewports, each showing its own display's workspaces.
         #[cfg(windows)]
         self.update_child_bars(ctx);
     }
@@ -850,28 +887,38 @@ fn render_region(
 
 #[cfg(windows)]
 impl WbarApp {
-    /// Mirror the bar onto each non-primary monitor. Enumerates the displays
-    /// once, then every frame re-shows each immediate child viewport and, as
-    /// soon as its window exists, pins and reserves it on its own monitor.
-    fn update_child_bars(&mut self, ctx: &egui::Context) {
-        if !self.monitors_enumerated {
-            self.monitors_enumerated = true;
-            for mon in appbar::enumerate_monitors() {
-                if mon.is_primary {
-                    continue;
-                }
-                let viewport_id =
-                    egui::ViewportId(egui::Id::new(format!("wbar-bar-{}", mon.device_name)));
-                self.child_bars.push(ChildBar {
-                    monitor: mon,
-                    viewport_id,
-                    appbar: None,
-                    reasserts: 15,
-                });
-            }
-            tracing::info!(count = self.child_bars.len(), "enumerated secondary monitors");
+    /// Enumerate displays once: record the primary device (the root viewport's
+    /// monitor) and create a ChildBar for every other monitor.
+    fn ensure_monitors_enumerated(&mut self) {
+        if self.monitors_enumerated {
+            return;
         }
+        self.monitors_enumerated = true;
+        for mon in appbar::enumerate_monitors() {
+            if mon.is_primary {
+                self.primary_device = Some(mon.device_name);
+                continue;
+            }
+            let viewport_id =
+                egui::ViewportId(egui::Id::new(format!("wbar-bar-{}", mon.device_name)));
+            self.child_bars.push(ChildBar {
+                monitor: mon,
+                viewport_id,
+                appbar: None,
+                reasserts: 15,
+            });
+        }
+        tracing::info!(
+            primary = ?self.primary_device,
+            secondaries = self.child_bars.len(),
+            "enumerated monitors"
+        );
+    }
 
+    /// Re-show each immediate child viewport (showing its own monitor's
+    /// workspaces) and, as soon as its window exists, pin and reserve it on
+    /// that monitor.
+    fn update_child_bars(&mut self, ctx: &egui::Context) {
         let edge = self.edge();
         let height_i = self.cfg.bar.height as i32;
         let bar_h = self.cfg.bar.height;
@@ -880,6 +927,9 @@ impl WbarApp {
             // The unique title doubles as the key for recovering the child's
             // HWND (eframe exposes no handle for child viewports).
             let title = self.child_bars[i].monitor.device_name.clone();
+            // Point the shared widget registry at this monitor before drawing.
+            self.widgets
+                .set_monitor_target(&MonitorTarget::Device(title.clone()));
             let builder = egui::ViewportBuilder::default()
                 .with_title(title.clone())
                 .with_decorations(false)
