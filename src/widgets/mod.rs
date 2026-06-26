@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use eframe::egui;
 
 use crate::config::{Config, WidgetConfig};
-use crate::glazewm::GlazewmClient;
+use crate::glazewm::{GlazewmClient, MonitorTarget};
 use crate::theme::Palette;
 
 mod clock;
@@ -15,6 +15,11 @@ mod workspaces;
 
 pub trait Widget {
     fn render(&mut self, ui: &mut egui::Ui);
+
+    /// Tell the widget which monitor it is being drawn for. Monitor-aware
+    /// widgets (workspaces) override this; the rest ignore it. Called before
+    /// each viewport renders so one shared registry can serve every bar.
+    fn set_monitor_target(&mut self, _target: &MonitorTarget) {}
 }
 
 /// Registry of instantiated widgets keyed by their config id (the layout
@@ -36,6 +41,14 @@ impl Widgets {
             .map(|(id, wc)| (id.clone(), build(id, wc, palette, radius, glazewm)))
             .collect();
         Self { items }
+    }
+
+    /// Point every monitor-aware widget at `target`. Call before drawing a
+    /// given bar so the shared registry shows that monitor's workspaces.
+    pub fn set_monitor_target(&mut self, target: &MonitorTarget) {
+        for w in self.items.values_mut() {
+            w.set_monitor_target(target);
+        }
     }
 
     /// Render the widget with the given id; falls back to a "?id" label if no
@@ -68,9 +81,12 @@ fn build(
             palette,
             radius,
         )),
-        WidgetConfig::TilingDirection(c) => Box::new(
-            tiling_direction::TilingDirectionWidget::new(c.clone(), glazewm.clone(), palette, radius),
-        ),
+        WidgetConfig::TilingDirection(c) => Box::new(tiling_direction::TilingDirectionWidget::new(
+            c.clone(),
+            glazewm.clone(),
+            palette,
+            radius,
+        )),
         WidgetConfig::Spacer(c) => Box::new(spacer::SpacerWidget::new(c.clone())),
     }
 }

@@ -27,15 +27,46 @@ const SUBSCRIBE_CMD: &str = concat!(
     "sub -e workspace_activated workspace_deactivated workspace_updated ",
     "focused_container_moved focus_changed tiling_direction_changed",
 );
-const QUERY_WORKSPACES_CMD: &str = "query workspaces";
+const QUERY_MONITORS_CMD: &str = "query monitors";
 const QUERY_TILING_DIRECTION_CMD: &str = "query tiling-direction";
 
-/// What widgets see. Cheap to clone — small Vec of small structs.
+/// What widgets see. Cheap to clone — small Vecs of small structs.
 #[derive(Debug, Default, Clone)]
 pub struct WorkspaceState {
-    pub workspaces: Vec<WorkspaceInfo>,
+    /// Workspaces grouped by the monitor they belong to, so a per-monitor bar
+    /// can show its own display's workspaces.
+    pub monitors: Vec<MonitorWorkspaces>,
     pub tiling_direction: Option<TilingDirection>,
     pub connected: bool,
+}
+
+/// One monitor and the workspaces assigned to it.
+#[derive(Debug, Clone)]
+pub struct MonitorWorkspaces {
+    /// GDI device name (e.g. `\\.\DISPLAY1`), the join key to a Win32 monitor.
+    pub device_name: String,
+    /// Whether this is the globally-focused monitor.
+    pub has_focus: bool,
+    pub workspaces: Vec<WorkspaceInfo>,
+}
+
+/// Which monitor's workspaces a widget should show.
+#[derive(Debug, Clone)]
+pub enum MonitorTarget {
+    /// The currently-focused monitor (used by the single-bar / fallback case).
+    Focused,
+    /// A specific monitor by GDI device name.
+    Device(String),
+}
+
+impl WorkspaceState {
+    /// Resolve the monitor a widget targets, if present in the current state.
+    pub fn monitor_for(&self, target: &MonitorTarget) -> Option<&MonitorWorkspaces> {
+        match target {
+            MonitorTarget::Focused => self.monitors.iter().find(|m| m.has_focus),
+            MonitorTarget::Device(name) => self.monitors.iter().find(|m| m.device_name == *name),
+        }
+    }
 }
 
 /// Direction in which the focused container will place a new tiling window.
@@ -52,7 +83,10 @@ pub struct WorkspaceInfo {
     #[allow(dead_code)]
     pub name: String,
     pub display_name: String,
+    /// Whether this workspace holds the global input focus.
     pub focused: bool,
+    /// Whether this workspace is the one currently shown on its monitor.
+    pub is_displayed: bool,
 }
 
 /// Shared handle. Clone is cheap; both halves point at the same `Arc<RwLock>`.
@@ -148,7 +182,7 @@ fn session(ctx: &egui::Context, waker: &Waker, state: &Arc<RwLock<WorkspaceState
     waker.wake();
 
     socket.send(Message::text(SUBSCRIBE_CMD))?;
-    socket.send(Message::text(QUERY_WORKSPACES_CMD))?;
+    socket.send(Message::text(QUERY_MONITORS_CMD))?;
     socket.send(Message::text(QUERY_TILING_DIRECTION_CMD))?;
 
     loop {
@@ -182,8 +216,8 @@ fn handle_text(
     match envelope.message_type.as_deref() {
         Some("client_response") => {
             let mut changed = false;
-            if let Some(ws_list) = extract_workspaces(&envelope.data) {
-                update_workspaces(state, ws_list);
+            if let Some(monitors) = extract_monitors(&envelope.data) {
+                update_monitors(state, monitors);
                 changed = true;
             }
             if let Some(dir) = extract_tiling_direction(&envelope.data) {
@@ -200,7 +234,7 @@ fn handle_text(
             // the tiling direction (focus moves can change the parent's
             // direction). Re-issue both queries; the responses come back as
             // client_response messages handled above.
-            socket.send(Message::text(QUERY_WORKSPACES_CMD))?;
+            socket.send(Message::text(QUERY_MONITORS_CMD))?;
             socket.send(Message::text(QUERY_TILING_DIRECTION_CMD))?;
         }
         _ => {}
@@ -208,9 +242,9 @@ fn handle_text(
     Ok(())
 }
 
-fn update_workspaces(state: &Arc<RwLock<WorkspaceState>>, new_list: Vec<WorkspaceInfo>) {
+fn update_monitors(state: &Arc<RwLock<WorkspaceState>>, monitors: Vec<MonitorWorkspaces>) {
     if let Ok(mut s) = state.write() {
-        s.workspaces = new_list;
+        s.monitors = monitors;
         s.connected = true;
     }
 }
@@ -250,6 +284,17 @@ struct Envelope {
 }
 
 #[derive(Debug, Deserialize)]
+struct MonitorJson {
+    #[serde(default, rename = "deviceName")]
+    device_name: Option<String>,
+    #[serde(default, rename = "hasFocus")]
+    has_focus: bool,
+    /// A monitor's children are its workspaces.
+    #[serde(default)]
+    children: Vec<WorkspaceJson>,
+}
+
+#[derive(Debug, Deserialize)]
 struct WorkspaceJson {
     #[serde(default)]
     name: String,
@@ -257,21 +302,39 @@ struct WorkspaceJson {
     display_name: Option<String>,
     #[serde(default, rename = "hasFocus")]
     has_focus: bool,
+    #[serde(default, rename = "isDisplayed")]
+    is_displayed: bool,
 }
 
-fn extract_workspaces(data: &Option<serde_json::Value>) -> Option<Vec<WorkspaceInfo>> {
+fn extract_monitors(data: &Option<serde_json::Value>) -> Option<Vec<MonitorWorkspaces>> {
     let data = data.as_ref()?;
-    let workspaces = data
-        .get("workspaces")
-        .or_else(|| data.pointer("/workspaces"))?;
-    let parsed: Vec<WorkspaceJson> = serde_json::from_value(workspaces.clone()).ok()?;
+    let monitors = data.get("monitors")?;
+    let parsed: Vec<MonitorJson> = serde_json::from_value(monitors.clone()).ok()?;
     Some(
         parsed
             .into_iter()
-            .map(|w| WorkspaceInfo {
-                display_name: w.display_name.clone().unwrap_or_else(|| w.name.clone()),
-                name: w.name,
-                focused: w.has_focus,
+            .map(|m| MonitorWorkspaces {
+                device_name: m.device_name.unwrap_or_default(),
+                has_focus: m.has_focus,
+                workspaces: m
+                    .children
+                    .into_iter()
+                    .map(|w| {
+                        // GlazeWM returns an empty displayName when none is
+                        // configured; fall back to the workspace name so the
+                        // pill isn't blank.
+                        let display_name = match w.display_name {
+                            Some(d) if !d.is_empty() => d,
+                            _ => w.name.clone(),
+                        };
+                        WorkspaceInfo {
+                            display_name,
+                            name: w.name,
+                            focused: w.has_focus,
+                            is_displayed: w.is_displayed,
+                        }
+                    })
+                    .collect(),
             })
             .collect(),
     )
