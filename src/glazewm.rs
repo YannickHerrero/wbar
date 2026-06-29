@@ -29,6 +29,7 @@ const SUBSCRIBE_CMD: &str = concat!(
 );
 const QUERY_MONITORS_CMD: &str = "query monitors";
 const QUERY_TILING_DIRECTION_CMD: &str = "query tiling-direction";
+const FOCUS_WORKSPACE_CMD_PREFIX: &str = "command focus --workspace ";
 
 /// What widgets see. Cheap to clone — small Vecs of small structs.
 #[derive(Debug, Default, Clone)]
@@ -110,6 +111,21 @@ impl GlazewmClient {
     /// clone, which is brief.
     pub fn snapshot(&self) -> WorkspaceState {
         self.state.read().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    /// Ask GlazeWM to focus the workspace with this internal name. The command
+    /// is sent on a short-lived background connection so a click never blocks
+    /// egui's render loop.
+    pub fn focus_workspace(&self, workspace_name: &str) {
+        let workspace_name = workspace_name.to_owned();
+        thread::Builder::new()
+            .name("glazewm-command".into())
+            .spawn(move || {
+                if let Err(err) = send_focus_workspace(&workspace_name) {
+                    tracing::warn!(workspace = %workspace_name, error = ?err, "failed to focus glazewm workspace");
+                }
+            })
+            .ok();
     }
 }
 
@@ -260,6 +276,34 @@ fn set_connected(state: &Arc<RwLock<WorkspaceState>>, connected: bool) {
     if let Ok(mut s) = state.write() {
         s.connected = connected;
     }
+}
+
+fn send_focus_workspace(workspace_name: &str) -> Result<()> {
+    let request = GLAZEWM_WS_URL
+        .into_client_request()
+        .context("building ws client request")?;
+    let (mut socket, _response) = tungstenite::client::client(request, connect_tcp()?)
+        .map_err(|e| anyhow::anyhow!("websocket handshake failed: {e}"))?;
+    let command = format!(
+        "{FOCUS_WORKSPACE_CMD_PREFIX}{}",
+        command_arg(workspace_name)
+    );
+    socket.send(Message::text(command))?;
+    socket.close(None).ok();
+    Ok(())
+}
+
+fn command_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '/'))
+    {
+        return value.to_owned();
+    }
+
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
 fn connect_tcp() -> Result<MaybeTlsStream<TcpStream>> {

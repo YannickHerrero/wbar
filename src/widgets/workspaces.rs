@@ -101,7 +101,12 @@ impl Widget for WorkspacesWidget {
             // gives us a fixed-size rect centred vertically inside the
             // bar. Direct painting (rect_filled + galley) sidesteps
             // egui's label minimum-height padding entirely.
-            let (rect, _resp) = ui.allocate_exact_size(pill_size, Sense::hover());
+            let (rect, resp) = ui.allocate_exact_size(pill_size, Sense::click());
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            if resp.clicked() && !ws.focused {
+                self.client.focus_workspace(&ws.name);
+            }
+
             ui.painter().rect_filled(rect, radius, bg);
             if outlined {
                 ui.painter().rect_stroke(

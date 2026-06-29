@@ -138,7 +138,7 @@ interval_seconds = 10
 
 ## Widgets
 
-Each widget is **display-only** in v1 — no click interactions.
+Most widgets are display-only; workspace pills can be clicked to focus that GlazeWM workspace.
 
 ### `glazewm` — workspace indicators
 
@@ -148,7 +148,7 @@ type = "glazewm"
 show_empty = false
 ```
 
-Pills for each workspace from GlazeWM, focused one highlighted with `palette.accent`. Connects to `ws://127.0.0.1:6123` and reconnects with exponential backoff. **Hidden entirely** when GlazeWM isn't running.
+Pills for each workspace from GlazeWM, focused one highlighted with `palette.accent`. Click a pill to run `focus --workspace <name>` in GlazeWM. Connects to `ws://127.0.0.1:6123` and reconnects with exponential backoff. **Hidden entirely** when GlazeWM isn't running.
 
 ### `tiling-direction` — current GlazeWM split direction
 
@@ -346,7 +346,7 @@ cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings
 cargo test --bins
 ```
 
-The intended shape is small — single bar, single primary monitor, display-only widgets. Multi-monitor, click-to-act workspaces, plugin systems, and other features that grow the surface area are intentionally out of scope. New widgets and configuration knobs are welcome.
+The intended shape is small and focused. New widgets and configuration knobs are welcome when they keep the bar simple and avoid unnecessary surface area.
 
 ## License
 
